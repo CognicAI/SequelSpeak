@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: oklch(0.55 0.25 260);    /* Deep Blue/Indigo */
+  --color-secondary: oklch(0.65 0.2 320);     /* Purple/Magenta */
+  --color-accent: oklch(0.7 0.15 180);      /* Cyan/Teal */
+  --color-background: oklch(0.12 0.02 260); /* Dark Navy Background */
+  --color-surface: oklch(0.18 0.03 260);    /* Slightly Lighter Surface */
+}
+
+body {
+  @apply bg-background text-gray-100 antialiased;
+  font-family: 'Inter', system-ui, sans-serif;
+}
