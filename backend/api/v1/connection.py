@@ -20,7 +20,5 @@ async def test_connection(request: ConnectionRequest):
     if connection_result["success"]:
         return {"status": "success", "message": connection_result["message"]}
     else:
-        # We return 200 even for connection failure to distinguish from API errors, 
-        # but with status=error in valid JSON response, or we could use 400. 
-        # Let's stick to returning a structured response.
+        # For connection failures, return a structured error response via HTTP 400.
         raise HTTPException(status_code=400, detail=connection_result["message"])
