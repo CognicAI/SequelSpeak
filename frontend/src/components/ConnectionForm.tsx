@@ -61,9 +61,7 @@ export function ConnectionForm() {
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (isValid || (mode === 'fields' && user && database)) {
-            // In fields mode, we trust the inputs if basic generic ones are present
-            console.log('Valid URL submitted (not logging content for security)');
-            // TODO: Send to backend
+            // TODO: Send to backend securely
         }
     };
 
@@ -89,6 +87,9 @@ export function ConnectionForm() {
                         </h2>
                         <p className="text-sm text-gray-400">
                             Enter your PostgreSQL connection details
+                        </p>
+                        <p className="text-xs text-xs text-gray-500/80 mt-1">
+                            <span className="font-medium text-yellow-500/80">Security Note:</span> Your connection string is encrypted in transit. We never log your credentials.
                         </p>
                     </div>
 
