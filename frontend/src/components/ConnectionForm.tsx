@@ -197,7 +197,7 @@ export function ConnectionForm() {
                                             <Globe className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
                                             <input
                                                 value={port}
-                                                maxLength={4}
+                                                maxLength={5}
                                                 onChange={(e) => {
                                                     const val = e.target.value;
                                                     if (/^\d*$/.test(val)) setPort(val);
