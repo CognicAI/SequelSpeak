@@ -47,7 +47,7 @@ export function ConnectionForm() {
     // Auto-update URL when fields change
     useEffect(() => {
         if (mode === 'fields') {
-            const generatedUrl = `postgres://${user || 'user'}:${password || 'password'}@${host || 'localhost'}:${port || '5432'}/${database || 'dbname'}`;
+            const generatedUrl = `postgres://${user || '<user>'}:${password || '<password>'}@${host || '<host>'}:${port || '<port>'}/${database || '<dbname>'}`;
             // formatting specifically for validation logic, though we might not validate incomplete fields strictly
             if (user && database) {
                 validateUrl(generatedUrl);
@@ -185,7 +185,7 @@ export function ConnectionForm() {
                                                 className="w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
                                                 placeholder="localhost"
                                             />
-                                            {host && (
+                                            {host && /^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])(\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]))*$|^localhost$/.test(host) && (
                                                 <div className="absolute right-2.5 top-2.5 animate-in fade-in zoom-in">
                                                     <Check className="w-4 h-4 text-green-500" />
                                                 </div>
@@ -206,7 +206,7 @@ export function ConnectionForm() {
                                                 className="w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
                                                 placeholder="5432"
                                             />
-                                            {port.length === 4 && (
+                                            {port.length === 6 && (
                                                 <div className="absolute right-2.5 top-2.5 animate-in fade-in zoom-in">
                                                     <Check className="w-4 h-4 text-green-500" />
                                                 </div>
