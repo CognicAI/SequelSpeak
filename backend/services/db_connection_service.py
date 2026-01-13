@@ -1,5 +1,9 @@
+import logging
 import psycopg
 from urllib.parse import urlparse, quote_plus, urlunparse
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 class DBConnectionService:
     @staticmethod
@@ -19,7 +23,8 @@ class DBConnectionService:
 
             return {"valid": True, "message": "Valid structure"}
         except Exception as e:
-            return {"valid": False, "message": f"URL Parsing Error: {str(e)}"}
+            logger.error(f"URL Parsing Error: {str(e)}")
+            return {"valid": False, "message": "Invalid URL format."}
 
     @staticmethod
     def test_connection(url: str) -> dict:
@@ -44,8 +49,17 @@ class DBConnectionService:
                         return {"success": False, "message": "Connection verification query failed."}
                         
         except psycopg.OperationalError as e:
-             # This catches mostly authentication or host unreachable errors
-             error_msg = str(e).strip()
-             return {"success": False, "message": f"Connection Failed: {error_msg}"}
+             # Log the full error for debugging but return a sanitized message to user
+             error_details = str(e).strip()
+             logger.error(f"Database Connection Failed: {error_details}")
+             
+             # Check for common errors to give slightly more specific (but safe) hints if desired,
+             # or stick to a completely generic message.
+             # For now, a safe, generic message is best.
+             return {
+                 "success": False, 
+                 "message": "Connection Failed: Unable to connect to the database. Please verify your host, port, and credentials."
+             }
         except Exception as e:
-            return {"success": False, "message": f"An unexpected error occurred: {str(e)}"}
+            logger.error(f"Unexpected error during connection test: {str(e)}", exc_info=True)
+            return {"success": False, "message": "An unexpected error occurred while testing the connection."}

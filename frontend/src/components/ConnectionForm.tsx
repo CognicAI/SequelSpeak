@@ -47,8 +47,13 @@ export function ConnectionForm() {
     // Auto-update URL when fields change
     useEffect(() => {
         if (mode === 'fields') {
-            const generatedUrl = `postgres://${user || '<user>'}:${password || '<password>'}@${host || '<host>'}:${port || '<port>'}/${database || '<dbname>'}`;
-            // formatting specifically for validation logic, though we might not validate incomplete fields strictly
+            const encodedUser = user ? encodeURIComponent(user) : '<user>';
+            const encodedPassword = password ? encodeURIComponent(password) : '<password>';
+            const encodedHost = host ? host : '<host>';
+            const encodedPort = port ? port : '<port>';
+            const encodedDb = database ? database : '<dbname>';
+
+            const generatedUrl = `postgres://${encodedUser}:${encodedPassword}@${encodedHost}:${encodedPort}/${encodedDb}`;
             if (user && database) {
                 validateUrl(generatedUrl);
             } else {
@@ -66,7 +71,9 @@ export function ConnectionForm() {
 
         let connectionUrl = url;
         if (mode === 'fields') {
-            connectionUrl = `postgres://${user}:${password}@${host}:${port}/${database}`;
+            const encodedUser = encodeURIComponent(user);
+            const encodedPassword = encodeURIComponent(password);
+            connectionUrl = `postgres://${encodedUser}:${encodedPassword}@${host}:${port}/${database}`;
         }
 
         if ((mode === 'url' && !isValid) || (mode === 'fields' && (!user || !database))) {
@@ -90,7 +97,7 @@ export function ConnectionForm() {
 
             if (response.ok) {
                 setStatusMessage({ type: 'success', text: data.message });
-                console.log("Connection successful");
+
             } else {
                 setStatusMessage({ type: 'error', text: data.detail || 'Connection failed' });
             }
