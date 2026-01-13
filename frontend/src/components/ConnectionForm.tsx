@@ -88,7 +88,7 @@ export function ConnectionForm() {
                         <p className="text-sm text-gray-400">
                             Enter your PostgreSQL connection details
                         </p>
-                        <p className="text-xs text-xs text-gray-500/80 mt-1">
+                        <p className="text-xs text-gray-500/80 mt-1">
                             <span className="font-medium text-yellow-500/80">Security Note:</span> Your connection string is encrypted in transit. We never log your credentials.
                         </p>
                     </div>
