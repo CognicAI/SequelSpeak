@@ -49,17 +49,57 @@ class DBConnectionService:
                         return {"success": False, "message": "Connection verification query failed."}
                         
         except psycopg.OperationalError as e:
-             # Log the full error for debugging but return a sanitized message to user
-             error_details = str(e).strip()
-             logger.error(f"Database Connection Failed: {error_details}")
-             
-             # Check for common errors to give slightly more specific (but safe) hints if desired,
-             # or stick to a completely generic message.
-             # For now, a safe, generic message is best.
-             return {
-                 "success": False, 
-                 "message": "Connection Failed: Unable to connect to the database. Please verify your host, port, and credentials."
-             }
+            # Log the full error for debugging but return a sanitized message to user
+            error_details = str(e).strip()
+            logger.error(f"Database Connection Failed: {error_details}")
+
+            # Provide slightly more specific (but still safe) messages for common failure modes.
+            details_lower = error_details.lower()
+
+            # Authentication / authorization issues
+            if (
+                "password authentication failed" in details_lower
+                or "authentication failed" in details_lower
+                or "no pg_hba.conf entry" in details_lower
+                or "permission denied" in details_lower
+            ):
+                user_message = (
+                    "Connection failed: Authentication error. "
+                    "Please verify your username, password, and access permissions."
+                )
+
+            # Database name / database not found issues
+            elif "does not exist" in details_lower and "database" in details_lower:
+                user_message = (
+                    "Connection failed: The specified database could not be found. "
+                    "Please verify the database name and that it exists on the server."
+                )
+
+            # Network / connectivity / host/port issues
+            elif (
+                "could not connect to server" in details_lower
+                or "connection refused" in details_lower
+                or "could not translate host name" in details_lower
+                or "network is unreachable" in details_lower
+                or "timeout expired" in details_lower
+                or "timed out" in details_lower
+            ):
+                user_message = (
+                    "Connection failed: Unable to reach the database server. "
+                    "Please verify the host, port, and network connectivity."
+                )
+
+            # Fallback generic message
+            else:
+                user_message = (
+                    "Connection failed: Unable to connect to the database. "
+                    "Please verify your host, port, database name, and credentials."
+                )
+
+            return {
+                "success": False,
+                "message": user_message,
+            }
         except Exception as e:
             logger.error(f"Unexpected error during connection test: {str(e)}", exc_info=True)
             return {"success": False, "message": "An unexpected error occurred while testing the connection."}
