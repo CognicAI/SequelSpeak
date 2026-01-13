@@ -1,4 +1,4 @@
-fastapi
-uvicorn
-sqlalchemy
-pydantic-settings
+psycopg==3.3.2
+psycopg-binary==3.3.2
+python-dotenv==1.2.1
+typing_extensions==4.15.0

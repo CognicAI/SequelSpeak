@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder } from 'lucide-react';
+import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 type ConnectionMode = 'url' | 'fields';
@@ -58,10 +58,46 @@ export function ConnectionForm() {
         }
     }, [host, port, user, password, database, mode]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const [isLoading, setIsLoading] = useState(false);
+    const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (isValid || (mode === 'fields' && user && database)) {
-            // TODO: Send to backend securely
+
+        let connectionUrl = url;
+        if (mode === 'fields') {
+            connectionUrl = `postgres://${user}:${password}@${host}:${port}/${database}`;
+        }
+
+        if ((mode === 'url' && !isValid) || (mode === 'fields' && (!user || !database))) {
+            return;
+        }
+
+        setIsLoading(true);
+        setStatusMessage(null);
+
+        try {
+            const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+            const response = await fetch(`${API_BASE_URL}/api/v1/utils/test-connection`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ connection_url: connectionUrl }),
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                setStatusMessage({ type: 'success', text: data.message });
+                console.log("Connection successful");
+            } else {
+                setStatusMessage({ type: 'error', text: data.detail || 'Connection failed' });
+            }
+        } catch (err) {
+            setStatusMessage({ type: 'error', text: 'Failed to connect to backend server.' });
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -273,29 +309,58 @@ export function ConnectionForm() {
                             </div>
                         )}
 
-                        <div className={cn(
-                            "flex items-center gap-2 text-xs transition-all duration-300 overflow-hidden",
-                            (mode === 'url' && isValid === false) ? "h-auto opacity-100 text-red-400" : "h-0 opacity-0"
-                        )}>
-                            <AlertCircle className="w-3 h-3" />
-                            <span>{error}</span>
+                        <div className="space-y-2">
+                            {/* Validation Error */}
+                            <div className={cn(
+                                "flex items-center gap-2 text-xs transition-all duration-300 overflow-hidden",
+                                ((mode === 'url' && isValid === false) && !statusMessage) ? "h-6 opacity-100 text-red-400" : "h-0 opacity-0"
+                            )}>
+                                <AlertCircle className="w-3 h-3" />
+                                <span>{error}</span>
+                            </div>
+
+                            {/* API Status Message */}
+                            {statusMessage && (
+                                <div className={cn(
+                                    "flex items-center gap-2 text-xs p-3 rounded-lg animate-in fade-in slide-in-from-top-2",
+                                    statusMessage.type === 'success'
+                                        ? "bg-green-500/10 text-green-400 border border-green-500/20"
+                                        : "bg-red-500/10 text-red-400 border border-red-500/20"
+                                )}>
+                                    {statusMessage.type === 'success' ? (
+                                        <Check className="w-4 h-4 shrink-0" />
+                                    ) : (
+                                        <AlertCircle className="w-4 h-4 shrink-0" />
+                                    )}
+                                    <span>{statusMessage.text}</span>
+                                </div>
+                            )}
                         </div>
 
                         <button
                             type="submit"
-                            disabled={(!isValid && mode === 'url') || (mode === 'fields' && (!user || !database))}
+                            disabled={isLoading || (!isValid && mode === 'url') || (mode === 'fields' && (!user || !database))}
                             className={cn(
                                 "w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all duration-300",
-                                (isValid || (mode === 'fields' && user && database))
+                                (isValid || (mode === 'fields' && user && database)) && !isLoading
                                     ? "bg-gradient-to-r from-primary to-secondary hover:opacity-90 hover:scale-[1.02] shadow-lg shadow-primary/25 cursor-pointer text-white"
                                     : "bg-white/5 text-gray-500 cursor-not-allowed border border-white/5"
                             )}
                         >
-                            <span>Connect</span>
-                            <ArrowRight className={cn(
-                                "w-4 h-4 transition-transform duration-300",
-                                (isValid || (mode === 'fields' && user && database)) && "group-hover:translate-x-1"
-                            )} />
+                            {isLoading ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    <span>Connecting...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span>Connect</span>
+                                    <ArrowRight className={cn(
+                                        "w-4 h-4 transition-transform duration-300",
+                                        (isValid || (mode === 'fields' && user && database)) && "group-hover:translate-x-1"
+                                    )} />
+                                </>
+                            )}
                         </button>
                     </form>
                 </div>
