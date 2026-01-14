@@ -6,7 +6,7 @@ omit =
     */__pycache__/*
     */migrations/*
     setup.py
-    */.venv/*
+    */venv/*
 
 [report]
 exclude_lines =

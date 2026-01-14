@@ -116,12 +116,14 @@ def test_connection_network_unreachable():
 
 def test_connection_could_not_connect():
     """Test generic could not connect error"""
-    error_msg = "could not connect to server: Connection timed out"
+    error_msg = "could not connect to server"
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@remote.example.com:5432/db")
         
         assert result["success"]  is False
         assert "Unable to reach the database server" in result["message"]
+
+
 
 # ============================================================================
 # TIMEOUT ERROR TESTS
