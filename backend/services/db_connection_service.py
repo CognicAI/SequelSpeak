@@ -1,6 +1,7 @@
 import logging
 import psycopg
 from urllib.parse import urlparse, quote_plus, urlunparse
+from config import settings
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class DBConnectionService:
             # Here since we get a full string, we pass it directly to psycopg.
             # Psycopg 3 validates well.
             
-            with psycopg.connect(url, connect_timeout=5) as conn:
+            with psycopg.connect(url, connect_timeout=settings.db_connection_timeout) as conn:
                 # Just opening the connection is enough to verify credentials and reachability
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1")
@@ -75,7 +76,7 @@ class DBConnectionService:
                     "Please verify the database name and that it exists on the server."
                 )
 
-            # Network / connectivity / host/port issues
+            # Network / connectivity / host/port issues (including timeout)
             elif (
                 "could not connect to server" in details_lower
                 or "connection refused" in details_lower
@@ -83,11 +84,19 @@ class DBConnectionService:
                 or "network is unreachable" in details_lower
                 or "timeout expired" in details_lower
                 or "timed out" in details_lower
+                or "timeout" in details_lower
             ):
-                user_message = (
-                    "Connection failed: Unable to reach the database server. "
-                    "Please verify the host, port, and network connectivity."
-                )
+                # Provide more specific message for timeout scenarios
+                if "timeout" in details_lower:
+                    user_message = (
+                        f"Connection failed: Connection attempt timed out after {settings.db_connection_timeout} seconds. "
+                        "Please verify the host, port, and network connectivity, or try increasing the timeout."
+                    )
+                else:
+                    user_message = (
+                        "Connection failed: Unable to reach the database server. "
+                        "Please verify the host, port, and network connectivity."
+                    )
 
             # Fallback generic message
             else:
@@ -103,3 +112,4 @@ class DBConnectionService:
         except Exception as e:
             logger.error(f"Unexpected error during connection test: {str(e)}", exc_info=True)
             return {"success": False, "message": "An unexpected error occurred while testing the connection."}
+
