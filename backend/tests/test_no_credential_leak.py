@@ -31,7 +31,7 @@ def test_no_credentials_in_logs():
     log_output = log_stream.getvalue()
     
     # Verify the connection failed (expected)
-    assert result["success"] == False
+    assert result["success"]  is False
     
     # Verify credentials are NOT in the log output
     assert "secretpassword123" not in log_output, "Password found in logs!"

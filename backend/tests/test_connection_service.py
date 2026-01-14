@@ -29,7 +29,7 @@ def test_connection_success():
 
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         
-        assert result["success"] == True
+        assert result["success"]  is True
         assert result["message"] == "Connection successful!"
 
 # ============================================================================
@@ -42,7 +42,7 @@ def test_connection_authentication_failed():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "Authentication error" in result["message"]
         assert "testuser" not in result["message"]  # Username should not leak
         assert "verify your username, password" in result["message"]
@@ -53,7 +53,7 @@ def test_connection_no_pg_hba_entry():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@192.168.1.100:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "Authentication error" in result["message"]
         assert "access permissions" in result["message"]
 
@@ -63,7 +63,7 @@ def test_connection_permission_denied():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/restricted_db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "Authentication error" in result["message"]
 
 # ============================================================================
@@ -76,7 +76,7 @@ def test_connection_database_not_found():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/nonexistent_db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "database could not be found" in result["message"]
         assert "verify the database name" in result["message"]
         assert "nonexistent_db" not in result["message"]  # DB name should not leak
@@ -91,7 +91,7 @@ def test_connection_refused():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "Unable to reach the database server" in result["message"]
         assert "verify the host, port" in result["message"]
 
@@ -101,7 +101,7 @@ def test_connection_host_not_found():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@invalid-host.example.com:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "Unable to reach the database server" in result["message"]
         assert "invalid-host.example.com" not in result["message"]  # Host should not leak
 
@@ -111,7 +111,7 @@ def test_connection_network_unreachable():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@10.0.0.1:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "Unable to reach the database server" in result["message"]
 
 def test_connection_could_not_connect():
@@ -120,7 +120,7 @@ def test_connection_could_not_connect():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@remote.example.com:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "Unable to reach the database server" in result["message"]
 
 # ============================================================================
@@ -133,7 +133,7 @@ def test_connection_timeout_error():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError("connection timeout expired")):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         # Verify timeout-specific message
         assert "timed out" in result["message"]
         assert "10 seconds" in result["message"]  # Default timeout
@@ -145,7 +145,7 @@ def test_connection_timeout_timed_out():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@slow-server.com:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "timed out" in result["message"]
         assert "10 seconds" in result["message"]
 
@@ -160,7 +160,7 @@ def test_connection_operational_error_sanitization():
         
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         
-        assert result["success"] == False
+        assert result["success"]  is False
         # Verify the message is SANITIZED
         assert "Sensitive internal DB info" not in result["message"]
         assert "Connection failed: Unable to connect to the database" in result["message"]
@@ -173,7 +173,7 @@ def test_connection_error_no_credentials_leak():
     with patch('psycopg.connect', side_effect=psycopg.OperationalError("Connection failed")):
         result = DBConnectionService.test_connection(sensitive_url)
         
-        assert result["success"] == False
+        assert result["success"]  is False
         # Verify NO part of the URL appears in the message
         assert "supersecret123" not in result["message"]
         assert "admin" not in result["message"]
@@ -188,20 +188,20 @@ def test_connection_generic_error():
     """Test generic unexpected error handling"""
     with patch('psycopg.connect', side_effect=Exception("Total failure")):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
-        assert result["success"] == False
+        assert result["success"]  is False
         assert result["message"] == "An unexpected error occurred while testing the connection."
 
 def test_connection_value_error():
     """Test ValueError handling"""
     with patch('psycopg.connect', side_effect=ValueError("Invalid connection parameter")):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "unexpected error" in result["message"]
 
 def test_connection_type_error():
     """Test TypeError handling"""
     with patch('psycopg.connect', side_effect=TypeError("Type mismatch")):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
-        assert result["success"] == False
+        assert result["success"]  is False
         assert "unexpected error" in result["message"]
 
