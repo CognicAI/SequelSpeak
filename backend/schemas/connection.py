@@ -56,7 +56,7 @@ class ConnectionErrorDetail(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "detail": "Authentication error. Please verify your username and password, and ensure the user has the necessary permissions."
+                "detail": "Connection failed: Authentication error. Please verify your username, password, and access permissions."
             }
         }
     )
