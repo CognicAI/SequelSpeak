@@ -111,8 +111,6 @@ class DBConnectionService:
                 or "certificate_verify_failed" in details_lower
                 or "tlsv1" in details_lower
                 or "ssl_error" in details_lower
-                or "sslmode" in details_lower
-                or "ssl required" in details_lower
                 or "certificate expired" in details_lower
                 or "certificate invalid" in details_lower
                 or "self-signed certificate" in details_lower
