@@ -122,7 +122,7 @@ class DBConnectionService:
             elif (
                 "timeout expired" in details_lower
                 or "timed out" in details_lower
-                or "timeout" in details_lower
+                or "connection timeout" in details_lower
             ):
                 return ConnectionResult(
                     success=False,
