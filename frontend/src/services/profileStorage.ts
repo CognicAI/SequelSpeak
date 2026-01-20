@@ -20,7 +20,10 @@ function isValidProfile(data: unknown): data is ConnectionProfile {
     return (
         typeof profile.id === 'string' &&
         typeof profile.name === 'string' &&
-        typeof profile.connectionUrl === 'string' &&
+        typeof profile.host === 'string' &&
+        typeof profile.port === 'string' &&
+        typeof profile.username === 'string' &&
+        typeof profile.database === 'string' &&
         typeof profile.createdAt === 'string' &&
         (profile.lastUsed === undefined || typeof profile.lastUsed === 'string')
     );
@@ -77,41 +80,96 @@ function setStoredProfiles(profiles: ConnectionProfile[]): boolean {
 }
 
 /**
- * Generates a user-friendly profile name from connection URL
- * Format: {user}@{host}/{database}
+ * Parses a PostgreSQL connection URL and extracts connection fields
+ * Password is intentionally excluded for security
+ * 
+ * @param connectionUrl - Full PostgreSQL connection URL
+ * @returns Parsed connection fields without password, or null if parsing fails
  */
-function generateProfileName(connectionUrl: string): string {
+function parseConnectionUrl(connectionUrl: string): Omit<ConnectionProfile, 'id' | 'name' | 'createdAt' | 'lastUsed'> | null {
     try {
         // Parse PostgreSQL URL: postgres://user:pass@host:port/database
-        const match = connectionUrl.match(/^postgres(?:ql)?:\/\/([^:]+)(?::[^@]*)?@([^:\/]+)(?::\d+)?\/([^?]+)/);
+        const match = connectionUrl.match(/^postgres(?:ql)?:\/\/([^:]+):([^@]+)@([^:\/]+)(?::(\d+))?\/([^?]+)/);
 
-        if (match) {
-            const [, user, host, database] = match;
-            return `${user}@${host}/${database}`;
+        if (!match) {
+            console.error('Failed to parse connection URL');
+            return null;
         }
 
-        // Fallback to timestamp-based name if parsing fails
-        return `Profile ${new Date().toLocaleString()}`;
-    } catch {
-        return `Profile ${new Date().toLocaleString()}`;
+        const [, username, /* password */, host, port = '5432', database] = match;
+
+        return {
+            host,
+            port,
+            username,
+            database,
+        };
+    } catch (error) {
+        console.error('Error parsing connection URL:', error);
+        return null;
     }
+}
+
+/**
+ * Generates a user-friendly profile name from connection fields
+ * Format: {username}@{host}/{database}
+ */
+function generateProfileName(username: string, host: string, database: string): string {
+    return `${username}@${host}/${database}`;
+}
+
+/**
+ * Checks if two profiles have the same connection details (excluding password)
+ */
+function isSameConnection(profile: ConnectionProfile, fields: { host: string; port: string; username: string; database: string }): boolean {
+    return (
+        profile.host === fields.host &&
+        profile.port === fields.port &&
+        profile.username === fields.username &&
+        profile.database === fields.database
+    );
 }
 
 /**
  * Saves a new connection profile after successful connection test
  * 
- * @param connectionUrl - Full PostgreSQL connection URL
+ * SECURITY: Only non-sensitive connection metadata is stored.
+ * Password is NEVER stored in LocalStorage. Users must re-enter
+ * passwords when using saved profiles.
+ * 
+ * @param connectionUrl - Full PostgreSQL connection URL (password will be excluded from storage)
  * @param name - Optional custom name (auto-generated if not provided)
- * @returns The saved profile, or null if save failed
+ * @returns The saved or updated profile, or null if save failed
  */
 export function saveProfile(connectionUrl: string, name?: string): ConnectionProfile | null {
     try {
+        const parsedFields = parseConnectionUrl(connectionUrl);
+
+        if (!parsedFields) {
+            console.error('Cannot save profile: invalid connection URL');
+            return null;
+        }
+
         const profiles = getStoredProfiles();
 
+        // Check if a profile with the same connection details already exists
+        const existingProfile = profiles.find(p => isSameConnection(p, parsedFields));
+
+        if (existingProfile) {
+            // Update the lastUsed timestamp instead of creating a duplicate
+            existingProfile.lastUsed = new Date().toISOString();
+            const success = setStoredProfiles(profiles);
+            return success ? existingProfile : null;
+        }
+
+        // Create new profile if it doesn't exist
         const newProfile: ConnectionProfile = {
             id: crypto.randomUUID(),
-            name: name || generateProfileName(connectionUrl),
-            connectionUrl,
+            name: name || generateProfileName(parsedFields.username, parsedFields.host, parsedFields.database),
+            host: parsedFields.host,
+            port: parsedFields.port,
+            username: parsedFields.username,
+            database: parsedFields.database,
             createdAt: new Date().toISOString(),
         };
 

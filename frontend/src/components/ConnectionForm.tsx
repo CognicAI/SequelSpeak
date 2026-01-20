@@ -117,9 +117,13 @@ export function ConnectionForm() {
                 const savedProfile = saveProfile(connectionUrl);
 
                 if (savedProfile) {
+                    // Check if this is an existing profile (has lastUsed) or new profile
+                    const isExisting = savedProfile.lastUsed !== undefined;
+                    const action = isExisting ? 'updated' : 'saved';
+
                     setStatusMessage({
                         type: 'success',
-                        text: `${successData.message} Profile "${savedProfile.name}" saved successfully.`
+                        text: `${successData.message} Profile "${savedProfile.name}" ${action} successfully.`
                     });
                 } else {
                     // Connection succeeded but profile save failed (e.g., quota exceeded)
@@ -173,6 +177,9 @@ export function ConnectionForm() {
                         </p>
                         <p className="text-xs text-gray-500/80 mt-1">
                             <span className="font-medium text-yellow-500/80">Security Note:</span> Your connection string is encrypted in transit. We never log your credentials.
+                        </p>
+                        <p className="text-xs text-green-400/70 mt-1 px-2">
+                            🔒 Passwords are NEVER stored. Saved profiles only contain connection metadata (host, port, username, database).
                         </p>
                     </div>
 
