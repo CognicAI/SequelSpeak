@@ -1,0 +1,39 @@
+/**
+ * Connection Profile Types
+ * 
+ * Defines the data contract for database connection profiles
+ * stored in browser LocalStorage.
+ * 
+ * SECURITY: Passwords are NEVER stored. Only non-sensitive connection
+ * metadata is persisted. Users must re-enter passwords when using saved profiles.
+ */
+
+/**
+ * Represents a saved database connection profile
+ * Password is intentionally excluded for security reasons
+ */
+export interface ConnectionProfile {
+    /** Unique identifier for the profile (UUID) */
+    id: string;
+
+    /** User-friendly name for the profile */
+    name: string;
+
+    /** Database host address */
+    host: string;
+
+    /** Database port number */
+    port: string;
+
+    /** Database username (non-sensitive) */
+    username: string;
+
+    /** Database name */
+    database: string;
+
+    /** ISO timestamp when the profile was created */
+    createdAt: string;
+
+    /** ISO timestamp when the profile was last used (optional) */
+    lastUsed?: string;
+}
