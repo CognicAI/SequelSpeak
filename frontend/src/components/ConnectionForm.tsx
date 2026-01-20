@@ -114,16 +114,15 @@ export function ConnectionForm() {
                 const successData = data as TestConnectionSuccessResponse;
 
                 // Save profile to LocalStorage after successful connection
-                const savedProfile = saveProfile(connectionUrl);
+                const result = saveProfile(connectionUrl);
 
-                if (savedProfile) {
-                    // Check if this is an existing profile (has lastUsed) or new profile
-                    const isExisting = savedProfile.lastUsed !== undefined;
-                    const action = isExisting ? 'updated' : 'saved';
+                if (result) {
+                    // Use the isNew flag to determine if this was a new profile or an update
+                    const action = result.isNew ? 'saved' : 'updated';
 
                     setStatusMessage({
                         type: 'success',
-                        text: `${successData.message} Profile "${savedProfile.name}" ${action} successfully.`
+                        text: `${successData.message} Profile "${result.profile.name}" ${action} successfully.`
                     });
                 } else {
                     // Connection succeeded but profile save failed (e.g., quota exceeded)

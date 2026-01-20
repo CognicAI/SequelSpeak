@@ -10,6 +10,14 @@ import type { ConnectionProfile } from '../types/profile';
 const STORAGE_KEY = 'sequel-speak-profiles';
 
 /**
+ * Result of saving a profile, indicating whether it was created or updated
+ */
+export interface SaveProfileResult {
+    profile: ConnectionProfile;
+    isNew: boolean; // true if newly created, false if updated existing
+}
+
+/**
  * Validates if the data structure matches ConnectionProfile interface
  */
 function isValidProfile(data: unknown): data is ConnectionProfile {
@@ -83,20 +91,47 @@ function setStoredProfiles(profiles: ConnectionProfile[]): boolean {
  * Parses a PostgreSQL connection URL and extracts connection fields
  * Password is intentionally excluded for security
  * 
+ * Handles:
+ * - URL-encoded special characters in username/password
+ * - IPv6 addresses in brackets [::1]
+ * - Query parameters (stripped from database name)
+ * - Both postgres:// and postgresql:// schemes
+ * 
  * @param connectionUrl - Full PostgreSQL connection URL
  * @returns Parsed connection fields without password, or null if parsing fails
  */
 function parseConnectionUrl(connectionUrl: string): Omit<ConnectionProfile, 'id' | 'name' | 'createdAt' | 'lastUsed'> | null {
     try {
-        // Parse PostgreSQL URL: postgres://user:pass@host:port/database
-        const match = connectionUrl.match(/^postgres(?:ql)?:\/\/([^:]+):([^@]+)@([^:\/]+)(?::(\d+))?\/([^?]+)/);
+        // Use URL API for robust parsing
+        // Replace postgres:// with http:// temporarily for URL parsing
+        const urlToParse = connectionUrl.replace(/^postgres(ql)?:\/\//, 'http://');
+        const url = new URL(urlToParse);
 
-        if (!match) {
-            console.error('Failed to parse connection URL');
+        // Extract and decode username (URL API handles decoding automatically)
+        const username = url.username;
+        if (!username) {
+            console.error('Username is required in connection URL');
             return null;
         }
 
-        const [, username, /* password */, host, port = '5432', database] = match;
+        // Extract host (handles both regular hostnames and IPv6 in brackets)
+        let host = url.hostname;
+        if (!host) {
+            console.error('Host is required in connection URL');
+            return null;
+        }
+
+        // Extract port (default to 5432 if not specified)
+        const port = url.port || '5432';
+
+        // Extract database name (pathname starts with /, remove it and any query params)
+        const pathname = url.pathname.substring(1); // Remove leading /
+        const database = pathname.split('?')[0]; // Remove query parameters if present
+
+        if (!database) {
+            console.error('Database name is required in connection URL');
+            return null;
+        }
 
         return {
             host,
@@ -106,7 +141,41 @@ function parseConnectionUrl(connectionUrl: string): Omit<ConnectionProfile, 'id'
         };
     } catch (error) {
         console.error('Error parsing connection URL:', error);
-        return null;
+
+        // Fallback to regex for edge cases where URL API fails
+        try {
+            // Enhanced regex that handles more cases
+            // postgres://username:password@host:port/database
+            // Supports IPv6: postgres://user:pass@[::1]:5432/db
+            const match = connectionUrl.match(
+                /^postgres(?:ql)?:\/\/([^:]+):([^@]+)@(\[[\da-fA-F:]+\]|[^:\/]+)(?::(\d+))?\/([^?]+)/
+            );
+
+            if (!match) {
+                console.error('Failed to parse connection URL with fallback regex');
+                return null;
+            }
+
+            const [, encodedUsername, /* password */, host, port = '5432', database] = match;
+
+            // Decode URL-encoded username
+            const username = decodeURIComponent(encodedUsername);
+
+            // Remove brackets from IPv6 addresses if present
+            const cleanHost = host.startsWith('[') && host.endsWith(']')
+                ? host.slice(1, -1)
+                : host;
+
+            return {
+                host: cleanHost,
+                port,
+                username,
+                database,
+            };
+        } catch (fallbackError) {
+            console.error('Fallback parsing also failed:', fallbackError);
+            return null;
+        }
     }
 }
 
@@ -139,9 +208,9 @@ function isSameConnection(profile: ConnectionProfile, fields: { host: string; po
  * 
  * @param connectionUrl - Full PostgreSQL connection URL (password will be excluded from storage)
  * @param name - Optional custom name (auto-generated if not provided)
- * @returns The saved or updated profile, or null if save failed
+ * @returns SaveProfileResult with profile and isNew flag, or null if save failed
  */
-export function saveProfile(connectionUrl: string, name?: string): ConnectionProfile | null {
+export function saveProfile(connectionUrl: string, name?: string): SaveProfileResult | null {
     try {
         const parsedFields = parseConnectionUrl(connectionUrl);
 
@@ -159,7 +228,7 @@ export function saveProfile(connectionUrl: string, name?: string): ConnectionPro
             // Update the lastUsed timestamp instead of creating a duplicate
             existingProfile.lastUsed = new Date().toISOString();
             const success = setStoredProfiles(profiles);
-            return success ? existingProfile : null;
+            return success ? { profile: existingProfile, isNew: false } : null;
         }
 
         // Create new profile if it doesn't exist
@@ -176,7 +245,7 @@ export function saveProfile(connectionUrl: string, name?: string): ConnectionPro
         profiles.push(newProfile);
 
         const success = setStoredProfiles(profiles);
-        return success ? newProfile : null;
+        return success ? { profile: newProfile, isNew: true } : null;
     } catch (error) {
         console.error('Failed to save profile:', error);
         return null;
