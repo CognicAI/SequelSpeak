@@ -23,11 +23,12 @@ This endpoint performs a lightweight connection check without fetching any datab
 2. Actual connection attempt to the database server
 
 **Error Scenarios:**
-- Invalid URL format
-- Authentication failure (wrong username/password)
-- Database not found
-- Host unreachable or network issues
-- Connection timeout
+- Invalid URL format (error_code: INVALID_URL)
+- Authentication failure (error_code: AUTH_FAILED)
+- Database not found (error_code: DATABASE_NOT_FOUND)
+- Host unreachable or network issues (error_code: NETWORK_ERROR)
+- Connection timeout (error_code: TIMEOUT)
+- SSL/TLS certificate errors (error_code: SSL_ERROR)
     """,
     responses={
         200: {
@@ -60,17 +61,31 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
     """
     # 1. Structural Validation
     validation_result = DBConnectionService.parse_and_verify_url(request.connection_url)
-    if not validation_result["valid"]:
-        raise HTTPException(status_code=400, detail=validation_result["message"])
+    if not validation_result.success:
+        error_detail = ConnectionErrorDetail(
+            detail=validation_result.message,
+            error_code=validation_result.error_code
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail.model_dump()
+        )
 
     # 2. Connection Test
     connection_result = DBConnectionService.test_connection(request.connection_url)
     
-    if connection_result["success"]:
+    if connection_result.success:
         return ConnectionTestResponse(
             status="success", 
-            message=connection_result["message"]
+            message=connection_result.message
         )
     else:
-        # For connection failures, return a structured error response via HTTP 400.
-        raise HTTPException(status_code=400, detail=connection_result["message"])
+        # For connection failures, raise HTTPException with structured error details
+        error_detail = ConnectionErrorDetail(
+            detail=connection_result.message,
+            error_code=connection_result.error_code
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail.model_dump()
+        )

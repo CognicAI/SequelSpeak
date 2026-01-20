@@ -1,5 +1,6 @@
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from schemas.errors import ErrorCode
 
 
 class ConnectionRequest(BaseModel):
@@ -52,11 +53,16 @@ class ConnectionErrorDetail(BaseModel):
         ..., 
         description="Error description explaining why the connection failed"
     )
+    error_code: Optional[ErrorCode] = Field(
+        default=None,
+        description="Standardized error code for programmatic error handling"
+    )
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "detail": "Connection failed: Authentication error. Please verify your username, password, and access permissions."
+                "detail": "Connection failed: Authentication error. Please verify your username, password, and access permissions.",
+                "error_code": "AUTH_FAILED"
             }
         }
     )
