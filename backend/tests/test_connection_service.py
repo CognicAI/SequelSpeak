@@ -150,14 +150,16 @@ def test_connection_ssl_certificate_error():
         assert result.error_code == ErrorCode.SSL_ERROR
 
 def test_connection_ssl_handshake_error():
-    """Test SSL handshake failure"""
+    """Test SSL SYSCALL error (network error during SSL connection)"""
     error_msg = "SSL SYSCALL error: Connection reset by peer"
     with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
-        assert "SSL/TLS certificate error" in result.message
-        assert result.error_code == ErrorCode.SSL_ERROR
+        # SSL SYSCALL errors are actually network errors that occur during SSL,
+        # not SSL certificate/configuration errors
+        assert "Unable to reach the database server" in result.message
+        assert result.error_code == ErrorCode.NETWORK_ERROR
 
 def test_connection_certificate_verify_failed():
     """Test certificate verification failure with detailed message"""
