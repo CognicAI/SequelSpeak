@@ -3,6 +3,7 @@ import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Fol
 import { cn } from '../lib/utils';
 import type { TestConnectionSuccessResponse, TestConnectionErrorResponse, ConnectionErrorCode } from '../types/api';
 import { getErrorMessage } from '../types/api';
+import { saveProfile } from '../services/profileStorage';
 
 type ConnectionMode = 'url' | 'fields';
 
@@ -67,7 +68,7 @@ export function ConnectionForm() {
 
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-    
+
     // AbortController ref for cancelling in-flight requests
     const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -89,10 +90,10 @@ export function ConnectionForm() {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
-        
+
         // Create new AbortController for this request
         abortControllerRef.current = new AbortController();
-        
+
         setIsLoading(true);
         setStatusMessage(null);
 
@@ -111,7 +112,22 @@ export function ConnectionForm() {
 
             if (response.ok) {
                 const successData = data as TestConnectionSuccessResponse;
-                setStatusMessage({ type: 'success', text: successData.message });
+
+                // Save profile to LocalStorage after successful connection
+                const savedProfile = saveProfile(connectionUrl);
+
+                if (savedProfile) {
+                    setStatusMessage({
+                        type: 'success',
+                        text: `${successData.message} Profile "${savedProfile.name}" saved successfully.`
+                    });
+                } else {
+                    // Connection succeeded but profile save failed (e.g., quota exceeded)
+                    setStatusMessage({
+                        type: 'success',
+                        text: `${successData.message} (Note: Profile could not be saved to browser storage)`
+                    });
+                }
             } else {
                 const errorData = data as TestConnectionErrorResponse;
                 const errorMessage = getErrorMessage(
