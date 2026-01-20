@@ -40,6 +40,18 @@ function isValidProfile(data: unknown): data is ConnectionProfile {
 /**
  * Safely retrieves and parses profiles from LocalStorage
  * Returns empty array if data is corrupted or missing
+ * 
+ * PERFORMANCE NOTE: This function is called on every CRUD operation, which means
+ * the profile array is parsed from JSON each time. For typical use cases (5-20 profiles),
+ * this overhead is negligible (< 1ms). Caching was considered but not implemented due to:
+ * - Cross-tab synchronization complexity (would require storage event listeners)
+ * - Risk of stale data across browser tabs
+ * - Minimal performance benefit for expected dataset size
+ * 
+ * If performance becomes an issue with 100+ profiles, consider implementing:
+ * - In-memory cache with storage event listeners for cross-tab invalidation
+ * - Debounced writes to reduce write frequency
+ * - IndexedDB for larger datasets
  */
 function getStoredProfiles(): ConnectionProfile[] {
     try {
