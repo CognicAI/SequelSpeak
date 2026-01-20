@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import type { TestConnectionSuccessResponse, TestConnectionErrorResponse, ConnectionErrorCode } from '../types/api';
+import { getErrorMessage } from '../types/api';
 
 type ConnectionMode = 'url' | 'fields';
 
@@ -65,6 +67,9 @@ export function ConnectionForm() {
 
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+    
+    // AbortController ref for cancelling in-flight requests
+    const abortControllerRef = useRef<AbortController | null>(null);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -80,6 +85,14 @@ export function ConnectionForm() {
             return;
         }
 
+        // Cancel any in-flight request
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        
+        // Create new AbortController for this request
+        abortControllerRef.current = new AbortController();
+        
         setIsLoading(true);
         setStatusMessage(null);
 
@@ -91,20 +104,31 @@ export function ConnectionForm() {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ connection_url: connectionUrl }),
+                signal: abortControllerRef.current.signal,
             });
 
             const data = await response.json();
 
             if (response.ok) {
-                setStatusMessage({ type: 'success', text: data.message });
-
+                const successData = data as TestConnectionSuccessResponse;
+                setStatusMessage({ type: 'success', text: successData.message });
             } else {
-                setStatusMessage({ type: 'error', text: data.detail || 'Connection failed' });
+                const errorData = data as TestConnectionErrorResponse;
+                const errorMessage = getErrorMessage(
+                    errorData.error_code as ConnectionErrorCode,
+                    errorData.detail
+                );
+                setStatusMessage({ type: 'error', text: errorMessage });
             }
         } catch (err) {
-            setStatusMessage({ type: 'error', text: 'Failed to connect to backend server.' });
+            // Don't show error if request was aborted (user cancelled)
+            if (err instanceof Error && err.name === 'AbortError') {
+                return;
+            }
+            setStatusMessage({ type: 'error', text: 'Failed to connect to backend server. Please check your network connection.' });
         } finally {
             setIsLoading(false);
+            abortControllerRef.current = null;
         }
     };
 
@@ -139,19 +163,25 @@ export function ConnectionForm() {
                     {/* Mode Toggles */}
                     <div className="flex p-1 bg-white/5 rounded-lg w-full">
                         <button
+                            type="button"
                             onClick={() => setMode('url')}
+                            disabled={isLoading}
                             className={cn(
-                                "flex-1 py-1.5 text-sm font-medium rounded-md transition-all duration-300 cursor-pointer",
-                                mode === 'url' ? "bg-primary/20 text-primary shadow-sm" : "text-gray-400 hover:text-white"
+                                "flex-1 py-1.5 text-sm font-medium rounded-md transition-all duration-300",
+                                mode === 'url' ? "bg-primary/20 text-primary shadow-sm" : "text-gray-400 hover:text-white",
+                                isLoading ? "cursor-not-allowed opacity-50" : "cursor-pointer"
                             )}
                         >
                             Connection String
                         </button>
                         <button
+                            type="button"
                             onClick={() => setMode('fields')}
+                            disabled={isLoading}
                             className={cn(
-                                "flex-1 py-1.5 text-sm font-medium rounded-md transition-all duration-300 cursor-pointer",
-                                mode === 'fields' ? "bg-primary/20 text-primary shadow-sm" : "text-gray-400 hover:text-white"
+                                "flex-1 py-1.5 text-sm font-medium rounded-md transition-all duration-300",
+                                mode === 'fields' ? "bg-primary/20 text-primary shadow-sm" : "text-gray-400 hover:text-white",
+                                isLoading ? "cursor-not-allowed opacity-50" : "cursor-pointer"
                             )}
                         >
                             Parameters
@@ -169,9 +199,11 @@ export function ConnectionForm() {
                                         onFocus={() => setIsFocused(true)}
                                         onBlur={() => setIsFocused(false)}
                                         placeholder=" "
+                                        disabled={isLoading}
                                         className={cn(
                                             "w-full pl-11 pr-12 py-3 rounded-xl bg-background/50 border outline-none transition-all duration-300 peer",
                                             "text-sm font-mono tracking-wide pt-5 pb-2", // Adjusted padding for label effect
+                                            isLoading && "opacity-50 cursor-not-allowed",
                                             isValid === false
                                                 ? "border-red-500/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50"
                                                 : isValid === true
@@ -225,7 +257,11 @@ export function ConnectionForm() {
                                             <input
                                                 value={host}
                                                 onChange={(e) => setHost(e.target.value)}
-                                                className="w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                                disabled={isLoading}
+                                                className={cn(
+                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
+                                                    isLoading && "opacity-50 cursor-not-allowed"
+                                                )}
                                                 placeholder="localhost"
                                             />
                                             {host && /^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])(\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]))*$|^localhost$/.test(host) && (
@@ -246,7 +282,11 @@ export function ConnectionForm() {
                                                     const val = e.target.value;
                                                     if (/^\d*$/.test(val)) setPort(val);
                                                 }}
-                                                className="w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                                disabled={isLoading}
+                                                className={cn(
+                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
+                                                    isLoading && "opacity-50 cursor-not-allowed"
+                                                )}
                                                 placeholder="5432"
                                             />
                                             {port.length === 6 && (
@@ -266,7 +306,11 @@ export function ConnectionForm() {
                                             <input
                                                 value={user}
                                                 onChange={(e) => setUser(e.target.value)}
-                                                className="w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                                disabled={isLoading}
+                                                className={cn(
+                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
+                                                    isLoading && "opacity-50 cursor-not-allowed"
+                                                )}
                                                 placeholder="postgres"
                                             />
                                             {user && (
@@ -284,7 +328,11 @@ export function ConnectionForm() {
                                                 type="password"
                                                 value={password}
                                                 onChange={(e) => setPassword(e.target.value)}
-                                                className="w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                                disabled={isLoading}
+                                                className={cn(
+                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
+                                                    isLoading && "opacity-50 cursor-not-allowed"
+                                                )}
                                                 placeholder="••••••"
                                             />
                                             {password && (
@@ -303,7 +351,11 @@ export function ConnectionForm() {
                                         <input
                                             value={database}
                                             onChange={(e) => setDatabase(e.target.value)}
-                                            className="w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                            disabled={isLoading}
+                                            className={cn(
+                                                "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
+                                                isLoading && "opacity-50 cursor-not-allowed"
+                                            )}
                                             placeholder="my_database"
                                         />
                                         {database && (
@@ -357,11 +409,11 @@ export function ConnectionForm() {
                             {isLoading ? (
                                 <>
                                     <Loader2 className="w-4 h-4 animate-spin" />
-                                    <span>Connecting...</span>
+                                    <span>Testing Connection...</span>
                                 </>
                             ) : (
                                 <>
-                                    <span>Connect</span>
+                                    <span>Test Connection</span>
                                     <ArrowRight className={cn(
                                         "w-4 h-4 transition-transform duration-300",
                                         (isValid || (mode === 'fields' && user && database)) && "group-hover:translate-x-1"
