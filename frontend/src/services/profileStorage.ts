@@ -145,10 +145,11 @@ function parseConnectionUrl(connectionUrl: string): Omit<ConnectionProfile, 'id'
         // Fallback to regex for edge cases where URL API fails
         try {
             // Enhanced regex that handles more cases
-            // postgres://username:password@host:port/database
+            // postgres://username[:password]@host:port/database
+            // Password is optional to handle URLs without passwords
             // Supports IPv6: postgres://user:pass@[::1]:5432/db
             const match = connectionUrl.match(
-                /^postgres(?:ql)?:\/\/([^:]+):([^@]+)@(\[[\da-fA-F:]+\]|[^:\/]+)(?::(\d+))?\/([^?]+)/
+                /^postgres(?:ql)?:\/\/([^:@]+)(?::([^@]*))?@(\[[\da-fA-F:]+\]|[^:\/]+)(?::(\d+))?\/([^?]+)/
             );
 
             if (!match) {
@@ -156,7 +157,7 @@ function parseConnectionUrl(connectionUrl: string): Omit<ConnectionProfile, 'id'
                 return null;
             }
 
-            const [, encodedUsername, /* password */, host, port = '5432', database] = match;
+            const [, encodedUsername, /* password (optional) */, host, port = '5432', database] = match;
 
             // Decode URL-encoded username
             const username = decodeURIComponent(encodedUsername);
@@ -227,6 +228,12 @@ export function saveProfile(connectionUrl: string, name?: string): SaveProfileRe
         if (existingProfile) {
             // Update the lastUsed timestamp instead of creating a duplicate
             existingProfile.lastUsed = new Date().toISOString();
+
+            // Update the profile name if a custom name was provided
+            if (name && name !== existingProfile.name) {
+                existingProfile.name = name;
+            }
+
             const success = setStoredProfiles(profiles);
             return success ? { profile: existingProfile, isNew: false } : null;
         }
