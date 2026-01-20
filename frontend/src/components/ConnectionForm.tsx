@@ -6,6 +6,7 @@ import { getErrorMessage } from '../types/api';
 import { ProfileSelector } from './ProfileSelector';
 import { useProfileSelection } from '../hooks/useProfileSelection';
 import type { ConnectionProfile } from '../types/connectionProfile';
+import { saveProfile } from '../services/profileStorage';
 
 type ConnectionMode = 'url' | 'fields';
 
@@ -115,7 +116,7 @@ export function ConnectionForm() {
 
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-    
+
     // AbortController ref for cancelling in-flight requests
     const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -137,10 +138,10 @@ export function ConnectionForm() {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
-        
+
         // Create new AbortController for this request
         abortControllerRef.current = new AbortController();
-        
+
         setIsLoading(true);
         setStatusMessage(null);
 
@@ -159,7 +160,25 @@ export function ConnectionForm() {
 
             if (response.ok) {
                 const successData = data as TestConnectionSuccessResponse;
-                setStatusMessage({ type: 'success', text: successData.message });
+
+                // Save profile to LocalStorage after successful connection
+                const result = saveProfile(connectionUrl);
+
+                if (result) {
+                    // Use the isNew flag to determine if this was a new profile or an update
+                    const action = result.isNew ? 'saved' : 'updated';
+
+                    setStatusMessage({
+                        type: 'success',
+                        text: `${successData.message} Profile "${result.profile.name}" ${action} successfully.`
+                    });
+                } else {
+                    // Connection succeeded but profile save failed (e.g., quota exceeded)
+                    setStatusMessage({
+                        type: 'success',
+                        text: `${successData.message} (Note: Profile could not be saved to browser storage)`
+                    });
+                }
             } else {
                 const errorData = data as TestConnectionErrorResponse;
                 const errorMessage = getErrorMessage(
@@ -205,6 +224,9 @@ export function ConnectionForm() {
                         </p>
                         <p className="text-xs text-gray-500/80 mt-1">
                             <span className="font-medium text-yellow-500/80">Security Note:</span> Your connection string is encrypted in transit. We never log your credentials.
+                        </p>
+                        <p className="text-xs text-green-400/70 mt-1 px-2">
+                            🔒 Passwords are NEVER stored. Saved profiles only contain connection metadata (host, port, username, database).
                         </p>
                     </div>
 
