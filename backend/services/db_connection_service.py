@@ -103,11 +103,17 @@ class DBConnectionService:
 
             # SSL/TLS certificate issues
             elif (
-                "ssl" in details_lower
-                or "certificate" in details_lower
+                "ssl error" in details_lower
+                or "ssl connection" in details_lower
+                or "ssl handshake" in details_lower
+                or "certificate verify" in details_lower
+                or "certificate validation" in details_lower
                 or "certificate_verify_failed" in details_lower
                 or "tlsv1" in details_lower
                 or "ssl_error" in details_lower
+                or "certificate expired" in details_lower
+                or "certificate invalid" in details_lower
+                or "self-signed certificate" in details_lower
             ):
                 return ConnectionResult(
                     success=False,
@@ -122,7 +128,7 @@ class DBConnectionService:
             elif (
                 "timeout expired" in details_lower
                 or "timed out" in details_lower
-                or "timeout" in details_lower
+                or "connection timeout" in details_lower
             ):
                 return ConnectionResult(
                     success=False,
