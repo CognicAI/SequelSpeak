@@ -1,8 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { TestConnectionSuccessResponse, TestConnectionErrorResponse, ConnectionErrorCode } from '../types/api';
 import { getErrorMessage } from '../types/api';
+import { ProfileSelector } from './ProfileSelector';
+import { useProfileSelection } from '../hooks/useProfileSelection';
+import type { ConnectionProfile } from '../types/connectionProfile';
 import { saveProfile } from '../services/profileStorage';
 
 type ConnectionMode = 'url' | 'fields';
@@ -17,6 +20,51 @@ export function ConnectionForm() {
     const [user, setUser] = useState('');
     const [password, setPassword] = useState('');
     const [database, setDatabase] = useState('');
+
+    /**
+     * Auto-fill form fields from a connection profile.
+     * Switches to 'fields' mode to show the filled values.
+     */
+    const fillFormFromProfile = useCallback((profile: ConnectionProfile) => {
+        const { connection } = profile;
+        setHost(connection.host);
+        setPort(connection.port);
+        setUser(connection.user);
+        setPassword(connection.password);
+        setDatabase(connection.database);
+        
+        // Switch to fields mode to show the filled values
+        setMode('fields');
+        
+        // Clear any previous status messages when switching profiles
+        setStatusMessage(null);
+    }, []);
+
+    /**
+     * Clear form fields when profile selection is cleared.
+     */
+    const clearFormFields = useCallback(() => {
+        setHost('localhost');
+        setPort('5432');
+        setUser('');
+        setPassword('');
+        setDatabase('');
+        setUrl('');
+        setStatusMessage(null);
+    }, []);
+
+    // Profile selection hook
+    const {
+        profiles,
+        activeProfileId,
+        isLoading: profilesLoading,
+        error: profilesError,
+        selectProfile,
+        clearSelection,
+    } = useProfileSelection({
+        onProfileSelect: fillFormFromProfile,
+        onProfileClear: clearFormFields,
+    });
 
     const [isValid, setIsValid] = useState<boolean | null>(null);
     const [error, setError] = useState('');
@@ -180,6 +228,35 @@ export function ConnectionForm() {
                         <p className="text-xs text-green-400/70 mt-1 px-2">
                             🔒 Passwords are NEVER stored. Saved profiles only contain connection metadata (host, port, username, database).
                         </p>
+                    </div>
+
+                    {/* Profile Selector */}
+                    <div className="w-full space-y-2">
+                        <label className="text-xs text-gray-400 ml-1 flex items-center gap-1.5">
+                            <span>Saved Profiles</span>
+                            {activeProfileId && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-medium">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                                    Active
+                                </span>
+                            )}
+                        </label>
+                        <ProfileSelector
+                            profiles={profiles}
+                            activeProfileId={activeProfileId}
+                            isLoading={profilesLoading}
+                            error={profilesError}
+                            onProfileSelect={selectProfile}
+                            onClearSelection={clearSelection}
+                            disabled={isLoading}
+                        />
+                    </div>
+
+                    {/* Divider */}
+                    <div className="w-full flex items-center gap-3">
+                        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                        <span className="text-xs text-gray-600 uppercase tracking-wider">or enter manually</span>
+                        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
                     </div>
 
                     {/* Mode Toggles */}
