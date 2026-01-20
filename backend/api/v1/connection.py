@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import JSONResponse
 from schemas.connection import ConnectionRequest, ConnectionTestResponse, ConnectionErrorDetail
 from services.db_connection_service import DBConnectionService
 
@@ -63,12 +62,13 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
     # 1. Structural Validation
     validation_result = DBConnectionService.parse_and_verify_url(request.connection_url)
     if not validation_result.success:
-        return JSONResponse(
-            status_code=400,
-            content=ConnectionErrorDetail(
-                detail=validation_result.message,
-                error_code=validation_result.error_code
-            ).model_dump()
+        error_detail = ConnectionErrorDetail(
+            detail=validation_result.message,
+            error_code=validation_result.error_code
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail.model_dump()
         )
 
     # 2. Connection Test
@@ -80,11 +80,12 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
             message=connection_result.message
         )
     else:
-        # For connection failures, return a structured error response via HTTP 400.
-        return JSONResponse(
-            status_code=400,
-            content=ConnectionErrorDetail(
-                detail=connection_result.message,
-                error_code=connection_result.error_code
-            ).model_dump()
+        # For connection failures, raise HTTPException with structured error details
+        error_detail = ConnectionErrorDetail(
+            detail=connection_result.message,
+            error_code=connection_result.error_code
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail.model_dump()
         )
