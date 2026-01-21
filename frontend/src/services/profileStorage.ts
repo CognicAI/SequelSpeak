@@ -354,13 +354,25 @@ export function updateProfileName(id: string, newName: string): boolean {
         }
 
         const profiles = getStoredProfiles();
+        const trimmedName = newName.trim();
+
+        // Prevent duplicate profile names (case-insensitive) across different profiles
+        const isDuplicate = profiles.some(
+            p => p.id !== id && p.name.trim().toLowerCase() === trimmedName.toLowerCase()
+        );
+
+        if (isDuplicate) {
+            console.warn('Duplicate profile name provided');
+            return false;
+        }
+
         const profile = profiles.find(p => p.id === id);
 
         if (!profile) {
             return false;
         }
 
-        profile.name = newName.trim();
+        profile.name = trimmedName;
 
         return setStoredProfiles(profiles);
     } catch (error) {
