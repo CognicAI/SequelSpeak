@@ -100,7 +100,7 @@ def test_connection_refused():
         assert result.success is False
         assert "Unable to reach the database server" in result.message
         assert "verify the host, port" in result.message
-        assert result.error_code == ErrorCode.NETWORK_ERROR
+        assert result.error_code == ErrorCode.HOST_UNREACHABLE
 
 def test_connection_host_not_found():
     """Test DNS resolution failure"""
@@ -111,7 +111,7 @@ def test_connection_host_not_found():
         assert result.success is False
         assert "Unable to reach the database server" in result.message
         assert "invalid-host.example.com" not in result.message  # Host should not leak
-        assert result.error_code == ErrorCode.NETWORK_ERROR
+        assert result.error_code == ErrorCode.HOST_UNREACHABLE
 
 def test_connection_network_unreachable():
     """Test network unreachable error"""
@@ -121,7 +121,7 @@ def test_connection_network_unreachable():
         
         assert result.success is False
         assert "Unable to reach the database server" in result.message
-        assert result.error_code == ErrorCode.NETWORK_ERROR
+        assert result.error_code == ErrorCode.HOST_UNREACHABLE
 
 def test_connection_could_not_connect():
     """Test generic could not connect error"""
@@ -131,7 +131,7 @@ def test_connection_could_not_connect():
         
         assert result.success is False
         assert "Unable to reach the database server" in result.message
-        assert result.error_code == ErrorCode.NETWORK_ERROR
+        assert result.error_code == ErrorCode.HOST_UNREACHABLE
 
 
 # ============================================================================
@@ -159,7 +159,7 @@ def test_connection_ssl_handshake_error():
         # SSL SYSCALL errors are actually network errors that occur during SSL,
         # not SSL certificate/configuration errors
         assert "Unable to reach the database server" in result.message
-        assert result.error_code == ErrorCode.NETWORK_ERROR
+        assert result.error_code == ErrorCode.HOST_UNREACHABLE
 
 def test_connection_certificate_verify_failed():
     """Test certificate verification failure with detailed message"""
@@ -238,7 +238,7 @@ def test_connection_operational_error_sanitization():
         assert "Sensitive internal DB info" not in result.message
         assert "Connection failed: Unable to connect to the database" in result.message
         assert "password mismatch" not in result.message
-        assert result.error_code == ErrorCode.UNKNOWN
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
 
 def test_connection_error_no_credentials_leak():
     """Test that connection URLs with credentials never appear in error messages"""
@@ -264,7 +264,7 @@ def test_connection_generic_error():
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         assert result.success is False
         assert result.message == "An unexpected error occurred while testing the connection."
-        assert result.error_code == ErrorCode.UNKNOWN
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
 
 def test_connection_value_error():
     """Test ValueError handling"""
@@ -272,7 +272,7 @@ def test_connection_value_error():
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         assert result.success is False
         assert "unexpected error" in result.message
-        assert result.error_code == ErrorCode.UNKNOWN
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
 
 def test_connection_type_error():
     """Test TypeError handling"""
@@ -280,7 +280,7 @@ def test_connection_type_error():
         result = DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
         assert result.success is False
         assert "unexpected error" in result.message
-        assert result.error_code == ErrorCode.UNKNOWN
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
 
 
 # ============================================================================
@@ -317,10 +317,10 @@ def test_error_codes_are_correct_enum_values():
     test_cases = [
         ("password authentication failed", ErrorCode.AUTH_FAILED),
         ("database \"test\" does not exist", ErrorCode.DATABASE_NOT_FOUND),
-        ("connection refused", ErrorCode.NETWORK_ERROR),
+        ("connection refused", ErrorCode.HOST_UNREACHABLE),
         ("timeout expired", ErrorCode.TIMEOUT),
         ("SSL certificate verify failed", ErrorCode.SSL_ERROR),
-        ("some random unknown error", ErrorCode.UNKNOWN),
+        ("some random unknown error", ErrorCode.CONNECTION_ERROR),
     ]
     
     for error_msg, expected_code in test_cases:
