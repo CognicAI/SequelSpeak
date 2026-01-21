@@ -332,7 +332,6 @@ export function ProfileSelector({
                                                 value={editName}
                                                 onChange={(e) => setEditName(e.target.value)}
                                                 onKeyDown={handleEditKeyDown}
-                                                onBlur={handleSaveEdit}
                                                 className="w-full bg-white/10 border border-primary/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary/50"
                                                 placeholder="Profile name"
                                             />
