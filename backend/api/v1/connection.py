@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 from schemas.connection import ConnectionRequest, ConnectionTestResponse, ConnectionErrorDetail
 from services.db_connection_service import DBConnectionService
+from exceptions import DatabaseConnectionError
 
 router = APIRouter()
 
@@ -26,7 +27,7 @@ This endpoint performs a lightweight connection check without fetching any datab
 - Invalid URL format (error_code: INVALID_URL)
 - Authentication failure (error_code: AUTH_FAILED)
 - Database not found (error_code: DATABASE_NOT_FOUND)
-- Host unreachable or network issues (error_code: NETWORK_ERROR)
+- Host unreachable or network issues (error_code: HOST_UNREACHABLE)
 - Connection timeout (error_code: TIMEOUT)
 - SSL/TLS certificate errors (error_code: SSL_ERROR)
     """,
@@ -62,13 +63,9 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
     # 1. Structural Validation
     validation_result = DBConnectionService.parse_and_verify_url(request.connection_url)
     if not validation_result.success:
-        error_detail = ConnectionErrorDetail(
+        raise DatabaseConnectionError(
             detail=validation_result.message,
             error_code=validation_result.error_code
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_detail.model_dump()
         )
 
     # 2. Connection Test
@@ -80,12 +77,8 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
             message=connection_result.message
         )
     else:
-        # For connection failures, raise HTTPException with structured error details
-        error_detail = ConnectionErrorDetail(
+        # For connection failures, raise DatabaseConnectionError with structured error details
+        raise DatabaseConnectionError(
             detail=connection_result.message,
             error_code=connection_result.error_code
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_detail.model_dump()
         )

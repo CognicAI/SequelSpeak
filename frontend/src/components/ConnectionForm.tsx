@@ -1,8 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import type { TestConnectionSuccessResponse, TestConnectionErrorResponse, ConnectionErrorCode } from '../types/api';
+import type { TestConnectionSuccessResponse, TestConnectionErrorResponse } from '../types/api';
 import { getErrorMessage } from '../types/api';
+import { ProfileSelector } from './ProfileSelector';
+import { useProfileSelection } from '../hooks/useProfileSelection';
+import type { ConnectionProfile } from '../types/profile';
+import { saveProfile } from '../services/profileStorage';
 
 type ConnectionMode = 'url' | 'fields';
 
@@ -16,6 +20,53 @@ export function ConnectionForm() {
     const [user, setUser] = useState('');
     const [password, setPassword] = useState('');
     const [database, setDatabase] = useState('');
+
+    /**
+     * Auto-fill form fields from a connection profile.
+     * Switches to 'fields' mode to show the filled values.
+     */
+    const fillFormFromProfile = useCallback((profile: ConnectionProfile) => {
+        setHost(profile.host);
+        setPort(profile.port);
+        setUser(profile.username);
+        // Password is never stored, so leave it empty for user to enter
+        setPassword('');
+        setDatabase(profile.database);
+
+        // Switch to fields mode to show the filled values
+        setMode('fields');
+
+        // Clear any previous status messages when switching profiles
+        setStatusMessage(null);
+    }, []);
+
+    /**
+     * Clear form fields when profile selection is cleared.
+     */
+    const clearFormFields = useCallback(() => {
+        setHost('localhost');
+        setPort('5432');
+        setUser('');
+        setPassword('');
+        setDatabase('');
+        setUrl('');
+        setStatusMessage(null);
+    }, []);
+
+    // Profile selection hook
+    const {
+        profiles,
+        activeProfileId,
+        isLoading: profilesLoading,
+        error: profilesError,
+        selectProfile,
+        clearSelection,
+        deleteProfile,
+        renameProfile,
+    } = useProfileSelection({
+        onProfileSelect: fillFormFromProfile,
+        onProfileClear: clearFormFields,
+    });
 
     const [isValid, setIsValid] = useState<boolean | null>(null);
     const [error, setError] = useState('');
@@ -67,7 +118,7 @@ export function ConnectionForm() {
 
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-    
+
     // AbortController ref for cancelling in-flight requests
     const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -89,10 +140,10 @@ export function ConnectionForm() {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
-        
+
         // Create new AbortController for this request
         abortControllerRef.current = new AbortController();
-        
+
         setIsLoading(true);
         setStatusMessage(null);
 
@@ -111,14 +162,31 @@ export function ConnectionForm() {
 
             if (response.ok) {
                 const successData = data as TestConnectionSuccessResponse;
-                setStatusMessage({ type: 'success', text: successData.message });
+
+                // Save profile to LocalStorage after successful connection
+                const result = saveProfile(connectionUrl);
+
+                if (result) {
+                    // Use the isNew flag to determine if this was a new profile or an update
+                    const action = result.isNew ? 'saved' : 'updated';
+
+                    setStatusMessage({
+                        type: 'success',
+                        text: `${successData.message} Profile "${result.profile.name}" ${action} successfully.`
+                    });
+                } else {
+                    // Connection succeeded but profile save failed (e.g., quota exceeded)
+                    setStatusMessage({
+                        type: 'success',
+                        text: `${successData.message} (Note: Profile could not be saved to browser storage)`
+                    });
+                }
             } else {
                 const errorData = data as TestConnectionErrorResponse;
-                const errorMessage = getErrorMessage(
-                    errorData.error_code as ConnectionErrorCode,
-                    errorData.detail
-                );
-                setStatusMessage({ type: 'error', text: errorMessage });
+                setStatusMessage({
+                    type: 'error',
+                    text: getErrorMessage(errorData.detail)
+                });
             }
         } catch (err) {
             // Don't show error if request was aborted (user cancelled)
@@ -158,6 +226,40 @@ export function ConnectionForm() {
                         <p className="text-xs text-gray-500/80 mt-1">
                             <span className="font-medium text-yellow-500/80">Security Note:</span> Your connection string is encrypted in transit. We never log your credentials.
                         </p>
+                        <p className="text-xs text-green-400/70 mt-1 px-2">
+                            🔒 Passwords are NEVER stored. Saved profiles only contain connection metadata (host, port, username, database).
+                        </p>
+                    </div>
+
+                    {/* Profile Selector */}
+                    <div className="w-full space-y-2">
+                        <label className="text-xs text-gray-400 ml-1 flex items-center gap-1.5">
+                            <span>Saved Profiles</span>
+                            {activeProfileId && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400 text-[10px] font-medium">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                                    Active
+                                </span>
+                            )}
+                        </label>
+                        <ProfileSelector
+                            profiles={profiles}
+                            activeProfileId={activeProfileId}
+                            isLoading={profilesLoading}
+                            error={profilesError}
+                            onProfileSelect={selectProfile}
+                            onClearSelection={clearSelection}
+                            onDeleteProfile={deleteProfile}
+                            onRenameProfile={renameProfile}
+                            disabled={isLoading}
+                        />
+                    </div>
+
+                    {/* Divider */}
+                    <div className="w-full flex items-center gap-3">
+                        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                        <span className="text-xs text-gray-600 uppercase tracking-wider">or enter manually</span>
+                        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
                     </div>
 
                     {/* Mode Toggles */}
@@ -214,7 +316,7 @@ export function ConnectionForm() {
 
                                     {/* Floating Label / Placeholder */}
                                     <div className={cn(
-                                        "absolute left-11 top-3.5 text-gray-500 text-sm font-mono pointer-events-none transition-all duration-200",
+                                        "absolute left-11 top-3.5 text-gray-500 text-sm font-mono pointer-events-none transition-all duration-200 truncate right-14",
                                         (isFocused || url) && "text-[10px] -translate-y-2.5 opacity-70"
                                     )}>
                                         postgres://user:pass@host:5432/db

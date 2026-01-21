@@ -63,7 +63,7 @@ class DBConnectionService:
                         return ConnectionResult(
                             success=False,
                             message="Connection verification query failed.",
-                            error_code=ErrorCode.UNKNOWN
+                            error_code=ErrorCode.CONNECTION_ERROR
                         )
                         
         except psycopg.OperationalError as e:
@@ -153,7 +153,7 @@ class DBConnectionService:
                         "Connection failed: Unable to reach the database server. "
                         "Please verify the host, port, and network connectivity."
                     ),
-                    error_code=ErrorCode.NETWORK_ERROR
+                    error_code=ErrorCode.HOST_UNREACHABLE
                 )
 
             # Fallback generic message
@@ -164,7 +164,7 @@ class DBConnectionService:
                         "Connection failed: Unable to connect to the database. "
                         "Please verify your host, port, database name, and credentials."
                     ),
-                    error_code=ErrorCode.UNKNOWN
+                    error_code=ErrorCode.CONNECTION_ERROR
                 )
 
         except Exception as e:
@@ -172,6 +172,6 @@ class DBConnectionService:
             return ConnectionResult(
                 success=False,
                 message="An unexpected error occurred while testing the connection.",
-                error_code=ErrorCode.UNKNOWN
+                error_code=ErrorCode.CONNECTION_ERROR
             )
 
