@@ -11,7 +11,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ChevronDown, User2, Check, AlertCircle, FolderOpen, X } from 'lucide-react';
+import { ChevronDown, User2, Check, AlertCircle, FolderOpen, X, Trash2, Pencil } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { ConnectionProfile } from '../types/profile';
 
@@ -28,6 +28,10 @@ interface ProfileSelectorProps {
     onProfileSelect: (profileId: string) => void;
     /** Callback when selection is cleared */
     onClearSelection?: () => void;
+    /** Callback when a profile is deleted */
+    onDeleteProfile?: (profileId: string) => void;
+    /** Callback when a profile is renamed */
+    onRenameProfile?: (profileId: string, newName: string) => void;
     /** Whether the selector is disabled */
     disabled?: boolean;
     /** Additional CSS classes */
@@ -41,10 +45,16 @@ export function ProfileSelector({
     error = null,
     onProfileSelect,
     onClearSelection,
+    onDeleteProfile,
+    onRenameProfile,
     disabled = false,
     className,
 }: ProfileSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
+    const [profileToDelete, setProfileToDelete] = useState<ConnectionProfile | null>(null);
+    const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+    const [editName, setEditName] = useState('');
+    const editInputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -102,6 +112,60 @@ export function ProfileSelector({
         event.stopPropagation();
         onClearSelection?.();
     }, [onClearSelection]);
+
+    // Handle delete button click - show confirmation
+    const handleDeleteClick = useCallback((event: React.MouseEvent, profile: ConnectionProfile) => {
+        event.stopPropagation();
+        setProfileToDelete(profile);
+    }, []);
+
+    // Handle delete confirmation
+    const handleConfirmDelete = useCallback(() => {
+        if (profileToDelete && onDeleteProfile) {
+            onDeleteProfile(profileToDelete.id);
+        }
+        setProfileToDelete(null);
+    }, [profileToDelete, onDeleteProfile]);
+
+    // Handle delete cancellation
+    const handleCancelDelete = useCallback(() => {
+        setProfileToDelete(null);
+    }, []);
+
+    // Handle edit button click - enter edit mode
+    const handleEditClick = useCallback((event: React.MouseEvent, profile: ConnectionProfile) => {
+        event.stopPropagation();
+        setEditingProfileId(profile.id);
+        setEditName(profile.name);
+        // Focus the input after render
+        setTimeout(() => editInputRef.current?.focus(), 0);
+    }, []);
+
+    // Handle save edit
+    const handleSaveEdit = useCallback(() => {
+        if (editingProfileId && editName.trim() && onRenameProfile) {
+            onRenameProfile(editingProfileId, editName.trim());
+        }
+        setEditingProfileId(null);
+        setEditName('');
+    }, [editingProfileId, editName, onRenameProfile]);
+
+    // Handle cancel edit
+    const handleCancelEdit = useCallback(() => {
+        setEditingProfileId(null);
+        setEditName('');
+    }, []);
+
+    // Handle edit input keydown
+    const handleEditKeyDown = useCallback((event: React.KeyboardEvent) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            handleSaveEdit();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            handleCancelEdit();
+        }
+    }, [handleSaveEdit, handleCancelEdit]);
 
     // Render loading state
     if (isLoading) {
@@ -227,7 +291,7 @@ export function ProfileSelector({
                                 aria-selected={isActive}
                                 onClick={() => handleSelect(profile.id)}
                                 className={cn(
-                                    "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors",
+                                    "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors group/item",
                                     "hover:bg-white/10 focus:bg-white/10 focus:outline-none",
                                     isActive && "bg-green-500/10"
                                 )}
@@ -246,19 +310,126 @@ export function ProfileSelector({
 
                                 {/* Profile Info */}
                                 <div className="flex-1 min-w-0">
-                                    <div className={cn(
-                                        "text-sm font-medium truncate",
-                                        isActive ? "text-green-400" : "text-white"
-                                    )}>
-                                        {profile.name}
-                                    </div>
-                                    <div className="text-xs text-gray-500 truncate">
-                                        {profile.host}:{profile.port}/{profile.database}
-                                    </div>
+                                    {editingProfileId === profile.id ? (
+                                        /* Edit Mode */
+                                        <div onClick={(e) => e.stopPropagation()}>
+                                            <input
+                                                ref={editInputRef}
+                                                type="text"
+                                                value={editName}
+                                                onChange={(e) => setEditName(e.target.value)}
+                                                onKeyDown={handleEditKeyDown}
+                                                onBlur={handleSaveEdit}
+                                                className="w-full bg-white/10 border border-primary/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                                placeholder="Profile name"
+                                            />
+                                            <div className="text-xs text-gray-500 truncate mt-1">
+                                                {profile.host}:{profile.port}/{profile.database}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        /* Display Mode */
+                                        <>
+                                            <div className={cn(
+                                                "text-sm font-medium truncate",
+                                                isActive ? "text-green-400" : "text-white"
+                                            )}>
+                                                {profile.name}
+                                            </div>
+                                            <div className="text-xs text-gray-500 truncate">
+                                                {profile.host}:{profile.port}/{profile.database}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
+
+                                {/* Edit Button */}
+                                {onRenameProfile && editingProfileId !== profile.id && (
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => handleEditClick(e, profile)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                handleEditClick(e as any, profile);
+                                            }
+                                        }}
+                                        className="p-1.5 rounded hover:bg-white/10 transition-colors cursor-pointer opacity-0 group-hover/item:opacity-100 focus:opacity-100"
+                                        aria-label={`Edit profile ${profile.name}`}
+                                    >
+                                        <Pencil className="w-4 h-4 text-gray-400 hover:text-white" />
+                                    </div>
+                                )}
+
+                                {/* Delete Button */}
+                                {onDeleteProfile && (
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => handleDeleteClick(e, profile)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                handleDeleteClick(e as any, profile);
+                                            }
+                                        }}
+                                        className="p-1.5 rounded hover:bg-red-500/20 transition-colors cursor-pointer opacity-0 group-hover/item:opacity-100 focus:opacity-100"
+                                        aria-label={`Delete profile ${profile.name}`}
+                                    >
+                                        <Trash2 className="w-4 h-4 text-gray-400 hover:text-red-400" />
+                                    </div>
+                                )}
                             </button>
                         );
                     })}
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {profileToDelete && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center">
+                    {/* Backdrop */}
+                    <div
+                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                        onClick={handleCancelDelete}
+                    />
+
+                    {/* Modal */}
+                    <div className="relative bg-background border border-white/10 rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2 rounded-full bg-red-500/20">
+                                <Trash2 className="w-5 h-5 text-red-400" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-white">Delete Profile</h3>
+                        </div>
+
+                        <p className="text-sm text-gray-400 mb-2">
+                            Are you sure you want to delete this profile?
+                        </p>
+                        <p className="text-sm font-medium text-white bg-white/5 rounded-lg px-3 py-2 mb-6 truncate">
+                            {profileToDelete.name}
+                        </p>
+
+                        <div className="flex gap-3">
+                            <button
+                                type="button"
+                                onClick={handleCancelDelete}
+                                className="flex-1 px-4 py-2.5 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:bg-white/5 transition-colors text-sm font-medium"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleConfirmDelete}
+                                className="flex-1 px-4 py-2.5 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors text-sm font-medium"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

@@ -61,6 +61,8 @@ export function ConnectionForm() {
         error: profilesError,
         selectProfile,
         clearSelection,
+        deleteProfile,
+        renameProfile,
     } = useProfileSelection({
         onProfileSelect: fillFormFromProfile,
         onProfileClear: clearFormFields,
@@ -248,6 +250,8 @@ export function ConnectionForm() {
                             error={profilesError}
                             onProfileSelect={selectProfile}
                             onClearSelection={clearSelection}
+                            onDeleteProfile={deleteProfile}
+                            onRenameProfile={renameProfile}
                             disabled={isLoading}
                         />
                     </div>

@@ -13,6 +13,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import type { ConnectionProfile } from '../types/profile';
 import { localStorageProfileAdapter, type ProfileAdapter } from '../data/localStorageProfileAdapter';
+import { deleteProfile as deleteProfileFromStorage, updateProfileName } from '../services/profileStorage';
 
 
 
@@ -30,6 +31,10 @@ interface UseProfileSelectionOptions {
     onProfileSelect?: (profile: ConnectionProfile) => void;
     /** Callback when profile is cleared/deselected */
     onProfileClear?: () => void;
+    /** Callback when a profile is deleted */
+    onProfileDelete?: (profileId: string) => void;
+    /** Callback when a profile is renamed */
+    onProfileRename?: (profileId: string, newName: string) => void;
 }
 
 interface UseProfileSelectionReturn extends ProfileSelectionState {
@@ -45,6 +50,10 @@ interface UseProfileSelectionReturn extends ProfileSelectionState {
     isProfileActive: (profileId: string) => boolean;
     /** Refresh profiles from adapter */
     refreshProfiles: () => void;
+    /** Delete a profile by ID */
+    deleteProfile: (profileId: string) => boolean;
+    /** Rename a profile */
+    renameProfile: (profileId: string, newName: string) => boolean;
 }
 
 /**
@@ -55,6 +64,8 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
         adapter = localStorageProfileAdapter,
         onProfileSelect,
         onProfileClear,
+        onProfileDelete,
+        onProfileRename,
     } = options;
 
     // State
@@ -181,6 +192,67 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
         loadProfiles();
     }, [loadProfiles]);
 
+    /**
+     * Delete a profile by ID.
+     * Clears selection if the deleted profile was active.
+     */
+    const deleteProfile = useCallback((profileId: string): boolean => {
+        // Defensive: validate input
+        if (!profileId || typeof profileId !== 'string') {
+            console.warn('Invalid profile ID provided to deleteProfile');
+            return false;
+        }
+
+        // Attempt to delete from storage
+        const success = deleteProfileFromStorage(profileId);
+
+        if (success) {
+            // Clear selection if the deleted profile was active
+            if (activeProfileId === profileId) {
+                setActiveProfileId(null);
+                latestSelectionRef.current = null;
+                onProfileClear?.();
+            }
+
+            // Refresh profiles to update the list
+            loadProfiles();
+
+            // Notify parent component
+            onProfileDelete?.(profileId);
+        }
+
+        return success;
+    }, [activeProfileId, loadProfiles, onProfileClear, onProfileDelete]);
+
+    /**
+     * Rename a profile.
+     */
+    const renameProfile = useCallback((profileId: string, newName: string): boolean => {
+        // Defensive: validate input
+        if (!profileId || typeof profileId !== 'string') {
+            console.warn('Invalid profile ID provided to renameProfile');
+            return false;
+        }
+
+        if (!newName || typeof newName !== 'string' || newName.trim().length === 0) {
+            console.warn('Invalid name provided to renameProfile');
+            return false;
+        }
+
+        // Attempt to update name in storage
+        const success = updateProfileName(profileId, newName);
+
+        if (success) {
+            // Refresh profiles to update the list
+            loadProfiles();
+
+            // Notify parent component
+            onProfileRename?.(profileId, newName);
+        }
+
+        return success;
+    }, [loadProfiles, onProfileRename]);
+
     return {
         // State
         activeProfileId,
@@ -195,5 +267,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
         getActiveConnectionFields,
         isProfileActive,
         refreshProfiles,
+        deleteProfile,
+        renameProfile,
     };
 }
