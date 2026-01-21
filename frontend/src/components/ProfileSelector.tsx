@@ -143,12 +143,24 @@ export function ProfileSelector({
 
     // Handle save edit
     const handleSaveEdit = useCallback(() => {
-        if (editingProfileId && editName.trim() && onRenameProfile) {
-            onRenameProfile(editingProfileId, editName.trim());
+        const trimmedName = editName.trim();
+
+        // If we don't have the necessary context, do nothing
+        if (!editingProfileId || !onRenameProfile) {
+            return;
         }
+
+        // Prevent saving empty or whitespace-only names: keep edit mode open
+        if (!trimmedName) {
+            // Refocus the input to give the user a clear cue to correct the value
+            editInputRef.current?.focus();
+            return;
+        }
+
+        onRenameProfile(editingProfileId, trimmedName);
         setEditingProfileId(null);
         setEditName('');
-    }, [editingProfileId, editName, onRenameProfile]);
+    }, [editingProfileId, editName, onRenameProfile, editInputRef]);
 
     // Handle cancel edit
     const handleCancelEdit = useCallback(() => {
