@@ -126,7 +126,7 @@ export function ProfileSelector({
             setIsOpen(false);
         }
         setProfileToDelete(null);
-    }, [profileToDelete, onDeleteProfile, setIsOpen]);
+    }, [profileToDelete, onDeleteProfile]);
 
     // Handle delete cancellation
     const handleCancelDelete = useCallback(() => {
@@ -176,7 +176,7 @@ export function ProfileSelector({
         onRenameProfile(editingProfileId, trimmedName);
         setEditingProfileId(null);
         setEditName('');
-    }, [editingProfileId, editName, onRenameProfile, editInputRef]);
+    }, [editingProfileId, editName, onRenameProfile]);
 
     // Handle cancel edit
     const handleCancelEdit = useCallback(() => {

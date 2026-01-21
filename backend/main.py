@@ -26,7 +26,7 @@ async def database_connection_error_handler(request: Request, exc: DatabaseConne
     
     Args:
         request: The incoming request
-        exc: The ConnectionError exception
+        exc: The DatabaseConnectionError exception
         
     Returns:
         JSONResponse with structured error details
