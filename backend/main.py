@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from api.v1 import connection
-from exceptions import ConnectionError
+from exceptions import DatabaseConnectionError
 
 app = FastAPI(title="Backend API")
 
@@ -16,12 +16,12 @@ app.add_middleware(
 )
 
 
-@app.exception_handler(ConnectionError)
-async def connection_error_handler(request: Request, exc: ConnectionError):
+@app.exception_handler(DatabaseConnectionError)
+async def database_connection_error_handler(request: Request, exc: DatabaseConnectionError):
     """
-    Custom exception handler for ConnectionError.
+    Custom exception handler for DatabaseConnectionError.
     
-    Converts ConnectionError exceptions into properly validated JSONResponse
+    Converts DatabaseConnectionError exceptions into properly validated JSONResponse
     objects that match the ConnectionErrorDetail schema.
     
     Args:

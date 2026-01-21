@@ -1,7 +1,7 @@
 from fastapi import APIRouter, status
 from schemas.connection import ConnectionRequest, ConnectionTestResponse, ConnectionErrorDetail
 from services.db_connection_service import DBConnectionService
-from exceptions import ConnectionError
+from exceptions import DatabaseConnectionError
 
 router = APIRouter()
 
@@ -63,7 +63,7 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
     # 1. Structural Validation
     validation_result = DBConnectionService.parse_and_verify_url(request.connection_url)
     if not validation_result.success:
-        raise ConnectionError(
+        raise DatabaseConnectionError(
             detail=validation_result.message,
             error_code=validation_result.error_code
         )
@@ -77,8 +77,8 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
             message=connection_result.message
         )
     else:
-        # For connection failures, raise ConnectionError with structured error details
-        raise ConnectionError(
+        # For connection failures, raise DatabaseConnectionError with structured error details
+        raise DatabaseConnectionError(
             detail=connection_result.message,
             error_code=connection_result.error_code
         )

@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from schemas.errors import ErrorCode
 
 
-class ConnectionError(HTTPException):
+class DatabaseConnectionError(HTTPException):
     """
     Custom exception for database connection errors.
     
