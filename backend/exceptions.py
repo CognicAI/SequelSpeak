@@ -25,7 +25,7 @@ class DatabaseConnectionError(HTTPException):
         error_code: Optional[ErrorCode] = None
     ):
         """
-        Initialize a ConnectionError.
+        Initialize a DatabaseConnectionError.
         
         Args:
             detail: Human-readable error message explaining the failure
