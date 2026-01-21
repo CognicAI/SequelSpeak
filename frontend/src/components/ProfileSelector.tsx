@@ -133,13 +133,28 @@ export function ProfileSelector({
         setProfileToDelete(null);
     }, []);
 
+    const focusTimeoutRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        if (editingProfileId) {
+            focusTimeoutRef.current = window.setTimeout(() => {
+                editInputRef.current?.focus();
+            }, 0);
+        }
+
+        return () => {
+            if (focusTimeoutRef.current !== null) {
+                clearTimeout(focusTimeoutRef.current);
+                focusTimeoutRef.current = null;
+            }
+        };
+    }, [editingProfileId]);
+
     // Handle edit button click - enter edit mode
     const handleEditClick = useCallback((event: React.MouseEvent, profile: ConnectionProfile) => {
         event.stopPropagation();
         setEditingProfileId(profile.id);
         setEditName(profile.name);
-        // Focus the input after render
-        setTimeout(() => editInputRef.current?.focus(), 0);
     }, []);
 
     // Handle save edit
