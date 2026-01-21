@@ -337,3 +337,46 @@ export function updateLastUsed(id: string): boolean {
         return false;
     }
 }
+
+/**
+ * Updates the name of a profile
+ * 
+ * @param id - Profile UUID
+ * @param newName - New name for the profile
+ * @returns true if updated, false if not found, invalid name, or update failed
+ */
+export function updateProfileName(id: string, newName: string): boolean {
+    try {
+        // Validate new name
+        if (!newName || typeof newName !== 'string' || newName.trim().length === 0) {
+            console.warn('Invalid profile name provided');
+            return false;
+        }
+
+        const profiles = getStoredProfiles();
+        const trimmedName = newName.trim();
+
+        // Prevent duplicate profile names (case-insensitive) across different profiles
+        const isDuplicate = profiles.some(
+            p => p.id !== id && p.name.trim().toLowerCase() === trimmedName.toLowerCase()
+        );
+
+        if (isDuplicate) {
+            console.warn('Duplicate profile name provided');
+            return false;
+        }
+
+        const profile = profiles.find(p => p.id === id);
+
+        if (!profile) {
+            return false;
+        }
+
+        profile.name = trimmedName;
+
+        return setStoredProfiles(profiles);
+    } catch (error) {
+        console.error('Failed to update profile name:', error);
+        return false;
+    }
+}
