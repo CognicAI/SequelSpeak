@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import type { TestConnectionSuccessResponse, TestConnectionErrorResponse, ConnectionErrorCode } from '../types/api';
+import type { TestConnectionSuccessResponse, TestConnectionErrorResponse } from '../types/api';
 import { getErrorMessage } from '../types/api';
 import { ProfileSelector } from './ProfileSelector';
 import { useProfileSelection } from '../hooks/useProfileSelection';
@@ -183,11 +183,10 @@ export function ConnectionForm() {
                 }
             } else {
                 const errorData = data as TestConnectionErrorResponse;
-                const errorMessage = getErrorMessage(
-                    errorData.error_code as ConnectionErrorCode,
-                    errorData.detail
-                );
-                setStatusMessage({ type: 'error', text: errorMessage });
+                setStatusMessage({
+                    type: 'error',
+                    text: getErrorMessage(errorData.detail)
+                });
             }
         } catch (err) {
             // Don't show error if request was aborted (user cancelled)

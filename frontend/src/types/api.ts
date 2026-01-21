@@ -33,24 +33,13 @@ export interface TestConnectionRequest {
 }
 
 /**
- * Maps backend error codes to user-friendly messages
+ * Gets the error message from the backend response.
+ * The backend already provides sanitized, user-friendly error messages,
+ * so we simply return the detail message from the response.
+ * 
+ * @param detailMessage - Detailed error message from the backend
+ * @returns The error message to display to the user
  */
-export const ERROR_CODE_MESSAGES: Record<ConnectionErrorCode, string> = {
-    AUTH_FAILED: 'Authentication failed. Please check your username and password.',
-    DATABASE_NOT_FOUND: 'Database not found. Please verify the database name exists.',
-    HOST_UNREACHABLE: 'Cannot reach the database server. Check the host address and network connectivity.',
-    TIMEOUT: 'Connection timed out. The server may be slow or unreachable.',
-    SSL_ERROR: 'SSL/TLS connection error. Check your SSL certificate configuration.',
-    INVALID_URL: 'Invalid connection URL format. Please check the URL structure.',
-    CONNECTION_ERROR: 'Connection failed. Please verify your connection details.',
-};
-
-/**
- * Gets a user-friendly error message for a given error code
- */
-export function getErrorMessage(errorCode?: ConnectionErrorCode, fallbackMessage?: string): string {
-    if (errorCode && ERROR_CODE_MESSAGES[errorCode]) {
-        return ERROR_CODE_MESSAGES[errorCode];
-    }
-    return fallbackMessage || 'An unexpected error occurred. Please try again.';
+export function getErrorMessage(detailMessage?: string): string {
+    return detailMessage || 'An unexpected error occurred. Please try again.';
 }
