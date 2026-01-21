@@ -17,7 +17,7 @@ class ErrorCode(str, Enum):
     DATABASE_NOT_FOUND = "DATABASE_NOT_FOUND"
     
     # Network & Connectivity
-    NETWORK_ERROR = "NETWORK_ERROR"
+    HOST_UNREACHABLE = "HOST_UNREACHABLE"
     TIMEOUT = "TIMEOUT"
     
     # SSL/TLS issues
@@ -27,7 +27,7 @@ class ErrorCode(str, Enum):
     INVALID_URL = "INVALID_URL"
     
     # Catch-all for unexpected errors
-    UNKNOWN = "UNKNOWN"
+    CONNECTION_ERROR = "CONNECTION_ERROR"
 
 
 class ConnectionResult(BaseModel):
