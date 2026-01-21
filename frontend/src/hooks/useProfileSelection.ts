@@ -11,11 +11,20 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import type { ConnectionProfile, ConnectionFields, ProfileAdapter, ProfileSelectionState } from '../types/connectionProfile';
-import { mockProfileAdapter } from '../data/mockProfileAdapter';
+import type { ConnectionProfile } from '../types/profile';
+import { localStorageProfileAdapter, type ProfileAdapter } from '../data/localStorageProfileAdapter';
+
+
+
+interface ProfileSelectionState {
+    activeProfileId: string | null;
+    profiles: ConnectionProfile[];
+    isLoading: boolean;
+    error: string | null;
+}
 
 interface UseProfileSelectionOptions {
-    /** Optional custom adapter (defaults to mockProfileAdapter) */
+    /** Optional custom adapter (defaults to localStorageProfileAdapter) */
     adapter?: ProfileAdapter;
     /** Callback when a profile is selected */
     onProfileSelect?: (profile: ConnectionProfile) => void;
@@ -28,8 +37,8 @@ interface UseProfileSelectionReturn extends ProfileSelectionState {
     selectProfile: (profileId: string) => void;
     /** Clear the current selection */
     clearSelection: () => void;
-    /** Get connection fields for the active profile */
-    getActiveConnectionFields: () => ConnectionFields | null;
+    /** Get connection fields for the active profile (without password) */
+    getActiveConnectionFields: () => Omit<ConnectionProfile, 'id' | 'name' | 'createdAt' | 'lastUsed'> | null;
     /** Get the currently active profile */
     activeProfile: ConnectionProfile | null;
     /** Check if a specific profile is active */
@@ -43,7 +52,7 @@ interface UseProfileSelectionReturn extends ProfileSelectionState {
  */
 export function useProfileSelection(options: UseProfileSelectionOptions = {}): UseProfileSelectionReturn {
     const {
-        adapter = mockProfileAdapter,
+        adapter = localStorageProfileAdapter,
         onProfileSelect,
         onProfileClear,
     } = options;
@@ -67,14 +76,14 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
 
         try {
             const loadedProfiles = adapter.getProfiles();
-            
+
             // Defensive: ensure we have an array
             if (!Array.isArray(loadedProfiles)) {
                 throw new Error('Invalid profiles data received');
             }
 
             setProfiles(loadedProfiles);
-            
+
             // Clear active profile if it no longer exists
             if (activeProfileId && !loadedProfiles.some(p => p.id === activeProfileId)) {
                 setActiveProfileId(null);
@@ -110,7 +119,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
 
         // Find the profile
         const profile = profiles.find(p => p.id === profileId);
-        
+
         if (!profile) {
             console.warn(`Profile with ID "${profileId}" not found`);
             return;
@@ -146,11 +155,16 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
      * Get connection fields for the active profile.
      * Returns null if no profile is active.
      */
-    const getActiveConnectionFields = useCallback((): ConnectionFields | null => {
+    const getActiveConnectionFields = useCallback((): Omit<ConnectionProfile, 'id' | 'name' | 'createdAt' | 'lastUsed'> | null => {
         if (!activeProfile) return null;
-        
-        // Return a copy to prevent external mutations
-        return { ...activeProfile.connection };
+
+        // Return connection fields without metadata (password is never stored)
+        return {
+            host: activeProfile.host,
+            port: activeProfile.port,
+            username: activeProfile.username,
+            database: activeProfile.database,
+        };
     }, [activeProfile]);
 
     /**
@@ -174,7 +188,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
         isLoading,
         error,
         activeProfile,
-        
+
         // Actions
         selectProfile,
         clearSelection,

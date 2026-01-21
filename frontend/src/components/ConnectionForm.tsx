@@ -5,7 +5,7 @@ import type { TestConnectionSuccessResponse, TestConnectionErrorResponse, Connec
 import { getErrorMessage } from '../types/api';
 import { ProfileSelector } from './ProfileSelector';
 import { useProfileSelection } from '../hooks/useProfileSelection';
-import type { ConnectionProfile } from '../types/connectionProfile';
+import type { ConnectionProfile } from '../types/profile';
 import { saveProfile } from '../services/profileStorage';
 
 type ConnectionMode = 'url' | 'fields';
@@ -26,16 +26,16 @@ export function ConnectionForm() {
      * Switches to 'fields' mode to show the filled values.
      */
     const fillFormFromProfile = useCallback((profile: ConnectionProfile) => {
-        const { connection } = profile;
-        setHost(connection.host);
-        setPort(connection.port);
-        setUser(connection.user);
-        setPassword(connection.password);
-        setDatabase(connection.database);
-        
+        setHost(profile.host);
+        setPort(profile.port);
+        setUser(profile.username);
+        // Password is never stored, so leave it empty for user to enter
+        setPassword('');
+        setDatabase(profile.database);
+
         // Switch to fields mode to show the filled values
         setMode('fields');
-        
+
         // Clear any previous status messages when switching profiles
         setStatusMessage(null);
     }, []);
@@ -313,7 +313,7 @@ export function ConnectionForm() {
 
                                     {/* Floating Label / Placeholder */}
                                     <div className={cn(
-                                        "absolute left-11 top-3.5 text-gray-500 text-sm font-mono pointer-events-none transition-all duration-200",
+                                        "absolute left-11 top-3.5 text-gray-500 text-sm font-mono pointer-events-none transition-all duration-200 truncate right-14",
                                         (isFocused || url) && "text-[10px] -translate-y-2.5 opacity-70"
                                     )}>
                                         postgres://user:pass@host:5432/db

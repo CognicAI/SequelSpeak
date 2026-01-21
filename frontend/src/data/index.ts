@@ -3,9 +3,6 @@
  */
 
 export {
-    mockProfileAdapter,
-    createMockAdapter,
-    emptyProfileAdapter,
-    singleProfileAdapter,
-    MOCK_PROFILES,
-} from './mockProfileAdapter';
+    localStorageProfileAdapter,
+    type ProfileAdapter,
+} from './localStorageProfileAdapter';
