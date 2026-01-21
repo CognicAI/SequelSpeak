@@ -126,7 +126,7 @@ export function ProfileSelector({
             setIsOpen(false);
         }
         setProfileToDelete(null);
-    }, [profileToDelete, onDeleteProfile, setIsOpen]);
+    }, [profileToDelete, onDeleteProfile]);
 
     // Handle delete cancellation
     const handleCancelDelete = useCallback(() => {
