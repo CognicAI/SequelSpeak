@@ -123,9 +123,10 @@ export function ProfileSelector({
     const handleConfirmDelete = useCallback(() => {
         if (profileToDelete && onDeleteProfile) {
             onDeleteProfile(profileToDelete.id);
+            setIsOpen(false);
         }
         setProfileToDelete(null);
-    }, [profileToDelete, onDeleteProfile]);
+    }, [profileToDelete, onDeleteProfile, setIsOpen]);
 
     // Handle delete cancellation
     const handleCancelDelete = useCallback(() => {
