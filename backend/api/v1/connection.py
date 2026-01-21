@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from schemas.connection import ConnectionRequest, ConnectionTestResponse, ConnectionErrorDetail
 from services.db_connection_service import DBConnectionService
