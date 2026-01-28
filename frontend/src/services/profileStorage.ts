@@ -10,6 +10,28 @@ import type { ConnectionProfile } from '../types/profile';
 const STORAGE_KEY = 'sequel-speak-profiles';
 
 /**
+ * Generates a UUID v4 string.
+ * Uses crypto.randomUUID if available, otherwise falls back to a pseudo-random implementation.
+ */
+function generateUUID(): string {
+    // Check if we're in a secure context with crypto.randomUUID available
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        try {
+            return crypto.randomUUID();
+        } catch (e) {
+            // Fallback if it fails for any reason
+        }
+    }
+
+    // Fallback implementation (RFC 4122 v4 compliant)
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
+/**
  * Result of saving a profile, indicating whether it was created or updated
  */
 export interface SaveProfileResult {
@@ -252,7 +274,7 @@ export function saveProfile(connectionUrl: string, name?: string): SaveProfileRe
 
         // Create new profile if it doesn't exist
         const newProfile: ConnectionProfile = {
-            id: crypto.randomUUID(),
+            id: generateUUID(),
             name: name || generateProfileName(parsedFields.username, parsedFields.host, parsedFields.database),
             host: parsedFields.host,
             port: parsedFields.port,
