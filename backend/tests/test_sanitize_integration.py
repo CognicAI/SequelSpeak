@@ -1,14 +1,15 @@
+import logging
+import pytest
+from unittest.mock import patch
+from io import StringIO
 import sys
 import os
-import logging
-from io import StringIO
-from unittest.mock import patch
-import psycopg
 
 # Add backend to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.db_connection_service import DBConnectionService
+import psycopg
 
 def test_service_sanitizes_error_logs():
     """
@@ -43,7 +44,3 @@ def test_service_sanitizes_error_logs():
         
     # Cleanup
     logger.removeHandler(handler)
-    print("✅ PASSED: No credentials leaked in logs")
-
-if __name__ == "__main__":
-    test_service_sanitizes_error_logs()
