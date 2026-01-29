@@ -30,8 +30,5 @@ def mask_connection_url(url: str) -> str:
     # postgres(ql)?://
     pattern = r"(postgres(?:ql)?://[^:]+):([^@]+)@"
     
-    # Check if we find a match
-    if re.search(pattern, url):
-        return re.sub(pattern, r"\1:******@", url)
-        
-    return url
+    # Perform substitution; if no match is found, url is returned unchanged.
+    return re.sub(pattern, r"\1:******@", url)
