@@ -1,8 +1,11 @@
 import logging
 import psycopg
+import re
 from urllib.parse import urlparse, quote_plus, urlunparse
 from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
+from utils.security import mask_connection_url
+from utils.input_validator import validate_connection_url
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -12,8 +15,19 @@ class DBConnectionService:
     def parse_and_verify_url(url: str) -> ConnectionResult:
         """
         Parses the connection URL and validates its structure.
+        Performs security validation before structural parsing.
         Returns a ConnectionResult with success status and message.
         """
+        # Security validation first - check for injection patterns and dangerous chars
+        security_validation = validate_connection_url(url)
+        if not security_validation.is_valid:
+            logger.warning(f"Security validation failed: {security_validation.error_type}")
+            return ConnectionResult(
+                success=False,
+                message=security_validation.error_message,
+                error_code=ErrorCode.INVALID_URL
+            )
+        
         try:
             parsed = urlparse(url)
             if not parsed.scheme or 'postgres' not in parsed.scheme:
@@ -69,7 +83,9 @@ class DBConnectionService:
         except psycopg.OperationalError as e:
             # Log the full error for debugging but return a sanitized message to user
             error_details = str(e).strip()
-            logger.error(f"Database Connection Failed: {error_details}")
+            # Mask any potential credentials in the error message before logging
+            secure_error_details = mask_connection_url(error_details)
+            logger.error(f"Database Connection Failed: {secure_error_details}")
 
             # Provide slightly more specific (but still safe) messages for common failure modes.
             details_lower = error_details.lower()
@@ -168,7 +184,11 @@ class DBConnectionService:
                 )
 
         except Exception as e:
-            logger.error(f"Unexpected error during connection test: {str(e)}", exc_info=True)
+            # Sanitize any potential credential leaks in unexpected errors
+            # Note: We intentionally do NOT use exc_info=True here because the traceback
+            # would contain the raw exception message which may include credentials
+            secure_error_msg = mask_connection_url(str(e))
+            logger.error(f"Unexpected error during connection test: {secure_error_msg}")
             return ConnectionResult(
                 success=False,
                 message="An unexpected error occurred while testing the connection.",
