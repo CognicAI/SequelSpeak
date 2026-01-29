@@ -1,5 +1,6 @@
 import logging
 import psycopg
+import re
 from urllib.parse import urlparse, quote_plus, urlunparse
 from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
