@@ -198,8 +198,9 @@ def contains_control_characters(value: str) -> bool:
     for char in value:
         code = ord(char)
         # Allow: tab (9), newline (10), carriage return (13)
-        # Note: Even though we allow these here, newlines are caught by
-        # command injection check for the specific dangerous cases
+        # Note: Newline (10) and carriage return (13) are permitted here because
+        # command injection detection is responsible for rejecting any inputs where
+        # those characters are used in a dangerous way (e.g., to break commands).
         if code < 32 and code not in (9, 10, 13):
             return True
         # DEL character
