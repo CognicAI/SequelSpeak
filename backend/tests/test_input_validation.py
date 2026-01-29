@@ -145,6 +145,11 @@ class TestCommandInjectionPatterns:
         """URL-encoded special characters in passwords should be allowed."""
         # %24 is $, which is fine when URL-encoded
         assert contains_command_injection_patterns("postgres://user:p%24ss@host/db") is False
+    
+    def test_allows_semicolon_in_query_params(self):
+        """Semicolons in query parameters should be allowed (valid URL syntax)."""
+        # This is explicitly mentioned as a valid use case in input_validator.py
+        assert contains_command_injection_patterns("postgres://user:pass@host/db?sslmode=require;connect_timeout=10") is False
 
 
 # ============================================================================
