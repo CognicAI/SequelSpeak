@@ -5,6 +5,7 @@ from api.v1 import connection
 from exceptions import DatabaseConnectionError
 from config import settings
 import logging
+from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(
@@ -12,8 +13,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

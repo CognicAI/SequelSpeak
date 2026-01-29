@@ -72,10 +72,13 @@ def test_allowed_origins_parsing():
 
 def test_no_hardcoded_secrets_check():
     """Test that hardcoded secrets are detected."""
+    from pydantic_settings import BaseSettings
+    
     # Simulate a class with a hardcoded secret default
-    class BadSettings(Settings):
+    class MockBadSettings(BaseSettings):
         secret_key: str = "hardcoded_secret"
     
-    # Should fail validation
+    # Should fail validation when calling the method from Settings
     with pytest.raises(ValueError, match="hard-coded"):
-        BadSettings().validate_no_secrets_hardcoded()
+        # We manually call the validation method from Settings class on this mock instance
+        Settings.validate_no_secrets_hardcoded(MockBadSettings())
