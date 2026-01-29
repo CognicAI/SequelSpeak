@@ -75,9 +75,10 @@ def contains_sql_injection_patterns(value: str) -> bool:
     
     value_lower = value.lower()
     
-    # Detect SQL line comments in suspicious contexts (e.g., after whitespace or quotes)
+    # Detect SQL line comments in suspicious contexts (e.g., end of word or before separators)
     # to avoid rejecting legitimate values like "my--database.example.com".
-    if re.search(r'(^|[\s\'";])--(\s|$)', value_lower):
+    # We accept '--' followed by non-word/non-dash characters or end of string.
+    if re.search(r'--($|[^\w-])', value_lower):
         return True
     
     # SQL comment and injection patterns that could be used to manipulate parsing
@@ -162,30 +163,39 @@ def contains_command_injection_patterns(value: str) -> bool:
     # Check for semicolon NOT followed by a valid URL query param pattern
     # Allow: ?sslmode=require;connect_timeout=10 (query params)
     # Block: ;rm -rf or ; DROP (command injection)
+    # Check for semicolon injection
     if ';' in value:
         # If there's a semicolon outside of valid query parameter context
         # Valid: ...?param1=val;param2=val or ...?param=val1;val2
         # Currently, we only treat semicolons as suspicious when there is no query string.
         query_start = value.find('?')
-        if query_start == -1:
-            # No query string, semicolons in the main URL are suspicious.
-            value_upper = value.upper()
-            value_lower = value.lower()
-            search_pos = -1
-            while True:
-                semicolon_pos = value.find(';', search_pos + 1)
-                if semicolon_pos == -1:
-                    break
-                # Skip URL-encoded semicolon which is considered okay.
-                if '%3B' in value_upper[:semicolon_pos+3]:
-                    search_pos = semicolon_pos
-                    continue
-                # Check what comes after the semicolon
-                after_semicolon = value_lower[semicolon_pos+1:semicolon_pos+10].strip()
-                # Common command injection indicators
-                if any(cmd in after_semicolon for cmd in ['rm', 'cat', 'ls', 'echo', 'wget', 'curl', 'bash', 'sh', 'python', 'perl', 'drop', 'delete']):
-                    return True
-                search_pos = semicolon_pos
+        # Common command injection indicators and SQL commands that could follow a semicolon
+        command_indicators = ['rm', 'cat', 'ls', 'echo', 'wget', 'curl', 'bash', 'sh', 
+                              'python', 'perl', 'drop', 'delete']
+        
+        # Check all semicolons in the input
+        for match in re.finditer(r';', value):
+            pos = match.start()
+            
+            # Skip if it's likely part of a URL-encoded semicolon (%3B)
+            if '%3B' in value.upper()[max(0, pos - 2):pos + 3]:
+                continue
+                
+            # Get the content following the semicolon
+            after_semicolon = value[pos+1:].strip()
+            if not after_semicolon:
+                continue
+                
+            after_semicolon_lower = after_semicolon.lower()
+            
+            for cmd in command_indicators:
+                if after_semicolon_lower.startswith(cmd):
+                    # Check if it's a command followed by a separator or end of string.
+                    # Separators include space, newline, or redirection/piping characters.
+                    # We EXCLUDE '=' to allow legitimate query parameters like ";param=value"
+                    rest = after_semicolon_lower[len(cmd):]
+                    if not rest or rest[0] in (' ', '\n', '\r', '\t', '>', '<', '|', '&', '$', '`'):
+                        return True
     
     return False
 
