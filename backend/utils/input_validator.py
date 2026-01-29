@@ -75,9 +75,13 @@ def contains_sql_injection_patterns(value: str) -> bool:
     
     value_lower = value.lower()
     
-    # SQL comment patterns that could be used to manipulate parsing
+    # Detect SQL line comments in suspicious contexts (e.g., after whitespace or quotes)
+    # to avoid rejecting legitimate values like "my--database.example.com".
+    if re.search(r'(^|[\s\'";])--(\s|$)', value_lower):
+        return True
+    
+    # SQL comment and injection patterns that could be used to manipulate parsing
     sql_patterns = [
-        '--',           # SQL line comment
         '/*',           # SQL block comment start
         '*/',           # SQL block comment end
         ';--',          # Statement terminator + comment
@@ -169,7 +173,7 @@ def contains_command_injection_patterns(value: str) -> bool:
             if query_start == -1:
                 # No query string, semicolon in main URL is suspicious
                 # But check if it's URL-encoded semicolon which is okay
-                if '%3B' not in value.upper()[:semicolon_pos+3]:
+                if '%3B' not in value.upper()[max(0, semicolon_pos - 2):semicolon_pos + 3]:
                     # Check what comes after the semicolon
                     after_semicolon = value[semicolon_pos+1:semicolon_pos+10].strip().lower()
                     # Common command injection indicators
@@ -198,8 +202,9 @@ def contains_control_characters(value: str) -> bool:
     for char in value:
         code = ord(char)
         # Allow: tab (9), newline (10), carriage return (13)
-        # Note: Even though we allow these here, newlines are caught by
-        # command injection check for the specific dangerous cases
+        # Note: Newline (10) and carriage return (13) are permitted here because
+        # command injection detection is responsible for rejecting any inputs where
+        # those characters are used in a dangerous way (e.g., to break commands).
         if code < 32 and code not in (9, 10, 13):
             return True
         # DEL character
