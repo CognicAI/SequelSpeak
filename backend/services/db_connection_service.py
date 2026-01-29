@@ -4,6 +4,7 @@ from urllib.parse import urlparse, quote_plus, urlunparse
 from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
+from utils.input_validator import validate_connection_url
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -13,8 +14,19 @@ class DBConnectionService:
     def parse_and_verify_url(url: str) -> ConnectionResult:
         """
         Parses the connection URL and validates its structure.
+        Performs security validation before structural parsing.
         Returns a ConnectionResult with success status and message.
         """
+        # Security validation first - check for injection patterns and dangerous chars
+        security_validation = validate_connection_url(url)
+        if not security_validation.is_valid:
+            logger.warning(f"Security validation failed: {security_validation.error_type}")
+            return ConnectionResult(
+                success=False,
+                message=security_validation.error_message,
+                error_code=ErrorCode.INVALID_URL
+            )
+        
         try:
             parsed = urlparse(url)
             if not parsed.scheme or 'postgres' not in parsed.scheme:
