@@ -31,9 +31,6 @@ from services.db_connection_service import DBConnectionService
 from utils.security import mask_connection_url
 from utils.input_validator import (
     validate_connection_url,
-    contains_null_bytes,
-    contains_sql_injection_patterns,
-    contains_command_injection_patterns,
     sanitize_for_logging,
 )
 from main import app
