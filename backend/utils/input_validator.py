@@ -75,9 +75,13 @@ def contains_sql_injection_patterns(value: str) -> bool:
     
     value_lower = value.lower()
     
-    # SQL comment patterns that could be used to manipulate parsing
+    # Detect SQL line comments in suspicious contexts (e.g., after whitespace or quotes)
+    # to avoid rejecting legitimate values like "my--database.example.com".
+    if re.search(r'(^|[\s\'";])--(\s|$)', value_lower):
+        return True
+    
+    # SQL comment and injection patterns that could be used to manipulate parsing
     sql_patterns = [
-        '--',           # SQL line comment
         '/*',           # SQL block comment start
         '*/',           # SQL block comment end
         ';--',          # Statement terminator + comment
