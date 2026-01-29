@@ -205,14 +205,13 @@ class TestErrorResponseSafety:
         if "detail" in data:
             assert "sql" not in data["detail"].lower()
             assert "injection" not in data["detail"].lower()
-    
-    def test_exception_handler_sanitizes_response(self):
+    @pytest.mark.asyncio
+    async def test_exception_handler_sanitizes_response(self):
         """Verify the exception handler produces safe responses."""
         from main import database_connection_error_handler
         from exceptions import DatabaseConnectionError
         from schemas.errors import ErrorCode
         from fastapi import Request
-        import asyncio
         
         # Create exception that might contain URL
         exc = DatabaseConnectionError(
@@ -223,9 +222,7 @@ class TestErrorResponseSafety:
         request = Request(scope={"type": "http", "method": "POST", "path": "/test"})
         
         # Run async handler
-        response = asyncio.get_event_loop().run_until_complete(
-            database_connection_error_handler(request, exc)
-        )
+        response = await database_connection_error_handler(request, exc)
         
         content = json.loads(response.body.decode())
         
@@ -367,7 +364,7 @@ class TestAPIEndpointSecurity:
         """Verify malformed requests don't expose internal details."""
         response = client.post(
             "/api/v1/utils/test-connection",
-            data="not valid json",
+            content="not valid json",
             headers={"Content-Type": "application/json"}
         )
         
