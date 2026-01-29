@@ -165,20 +165,27 @@ def contains_command_injection_patterns(value: str) -> bool:
     if ';' in value:
         # If there's a semicolon outside of valid query parameter context
         # Valid: ...?param1=val;param2=val or ...?param=val1;val2
-        # Check if semicolon appears before '?' (in path, which is suspicious)
+        # Currently, we only treat semicolons as suspicious when there is no query string.
         query_start = value.find('?')
-        semicolon_pos = value.find(';')
-        
-        if semicolon_pos != -1:
-            if query_start == -1:
-                # No query string, semicolon in main URL is suspicious
-                # But check if it's URL-encoded semicolon which is okay
-                if '%3B' not in value.upper()[max(0, semicolon_pos - 2):semicolon_pos + 3]:
-                    # Check what comes after the semicolon
-                    after_semicolon = value[semicolon_pos+1:semicolon_pos+10].strip().lower()
-                    # Common command injection indicators
-                    if any(cmd in after_semicolon for cmd in ['rm', 'cat', 'ls', 'echo', 'wget', 'curl', 'bash', 'sh', 'python', 'perl', 'drop', 'delete']):
-                        return True
+        if query_start == -1:
+            # No query string, semicolons in the main URL are suspicious.
+            value_upper = value.upper()
+            value_lower = value.lower()
+            search_pos = -1
+            while True:
+                semicolon_pos = value.find(';', search_pos + 1)
+                if semicolon_pos == -1:
+                    break
+                # Skip URL-encoded semicolon which is considered okay.
+                if '%3B' in value_upper[:semicolon_pos+3]:
+                    search_pos = semicolon_pos
+                    continue
+                # Check what comes after the semicolon
+                after_semicolon = value_lower[semicolon_pos+1:semicolon_pos+10].strip()
+                # Common command injection indicators
+                if any(cmd in after_semicolon for cmd in ['rm', 'cat', 'ls', 'echo', 'wget', 'curl', 'bash', 'sh', 'python', 'perl', 'drop', 'delete']):
+                    return True
+                search_pos = semicolon_pos
     
     return False
 
