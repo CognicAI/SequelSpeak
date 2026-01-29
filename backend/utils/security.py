@@ -1,5 +1,4 @@
 import re
-from urllib.parse import urlparse, urlunparse
 
 def mask_connection_url(url: str) -> str:
     """
