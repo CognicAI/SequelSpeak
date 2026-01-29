@@ -183,7 +183,11 @@ class DBConnectionService:
                 )
 
         except Exception as e:
-            logger.error(f"Unexpected error during connection test: {str(e)}", exc_info=True)
+            # Sanitize any potential credential leaks in unexpected errors
+            # Note: We intentionally do NOT use exc_info=True here because the traceback
+            # would contain the raw exception message which may include credentials
+            secure_error_msg = mask_connection_url(str(e))
+            logger.error(f"Unexpected error during connection test: {secure_error_msg}")
             return ConnectionResult(
                 success=False,
                 message="An unexpected error occurred while testing the connection.",
