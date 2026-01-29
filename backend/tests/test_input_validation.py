@@ -112,9 +112,18 @@ class TestCommandInjectionPatterns:
         """Detect backtick command substitution."""
         assert contains_command_injection_patterns("postgres://user:`whoami`@host/db") is True
     
-    def test_detects_pipe(self):
-        """Detect pipe character."""
+    def test_detects_pipe_with_command(self):
+        """Detect pipe character followed by shell command."""
         assert contains_command_injection_patterns("postgres://user:pass|cat /etc/passwd@host/db") is True
+    
+    def test_allows_pipe_in_password(self):
+        """Allow pipe character in password when not followed by command."""
+        # Pipe in password without command-like content after it
+        assert contains_command_injection_patterns("postgres://user:pass|word@host/db") is False
+    
+    def test_allows_url_encoded_pipe(self):
+        """URL-encoded pipe (%7C) should be allowed."""
+        assert contains_command_injection_patterns("postgres://user:pass%7Cword@host/db") is False
     
     def test_detects_and_operator(self):
         """Detect && operator."""

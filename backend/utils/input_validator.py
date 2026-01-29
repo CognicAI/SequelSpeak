@@ -108,6 +108,9 @@ def contains_command_injection_patterns(value: str) -> bool:
     These patterns could be dangerous if the connection URL is ever
     passed to a shell command or improperly escaped.
     
+    Note: URL-encoded special characters (like %7C for pipe) are allowed
+    since they represent legitimate password characters.
+    
     Args:
         value: String to check
         
@@ -120,16 +123,37 @@ def contains_command_injection_patterns(value: str) -> bool:
     # Shell metacharacters and command substitution patterns
     # Note: We're careful not to flag legitimate URL characters
     dangerous_patterns = [
-        '$(', '`',          # Command substitution
-        '|',                # Pipe (shell command chaining)
-        '&&', '||',         # Shell logical operators
-        '\n', '\r\n',       # Newlines (command injection via line breaks)
-        '>${', '>$(', '<$(', # Redirection with substitution
+        '$(',           # Command substitution
+        '`',            # Backtick command substitution
+        '&&',           # Shell AND operator
+        '||',           # Shell OR operator
+        '\n', '\r\n',   # Newlines (command injection via line breaks)
+        '>${', '>$(', '<$(',  # Redirection with substitution
     ]
     
     for pattern in dangerous_patterns:
         if pattern in value:
             return True
+    
+    # Check for raw pipe character '|' - but allow URL-encoded %7C
+    # Raw pipes in URLs are suspicious; legitimate pipes in passwords should be URL-encoded
+    if '|' in value:
+        # Check if this could be a command injection pattern
+        # Pattern: something | command
+        pipe_idx = value.find('|')
+        # If there's content after the pipe that looks like a command, block it
+        after_pipe = value[pipe_idx+1:pipe_idx+15].strip().lower()
+        command_indicators = ['cat', 'rm', 'ls', 'echo', 'wget', 'curl', 'bash', 
+                              'sh', 'python', 'perl', 'nc', 'netcat', 'grep', 'awk']
+        if any(after_pipe.startswith(cmd) for cmd in command_indicators):
+            return True
+        # Also block if pipe appears to be used for shell piping (space before and after)
+        if pipe_idx > 0 and pipe_idx < len(value) - 1:
+            before = value[pipe_idx-1]
+            after = value[pipe_idx+1] if pipe_idx+1 < len(value) else ''
+            # Pattern like: " | " is very suspicious
+            if before == ' ' and after == ' ':
+                return True
     
     # Check for semicolon NOT followed by a valid URL query param pattern
     # Allow: ?sslmode=require;connect_timeout=10 (query params)
