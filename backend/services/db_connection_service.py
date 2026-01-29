@@ -1,5 +1,6 @@
 import logging
 import psycopg
+import re
 from urllib.parse import urlparse, quote_plus, urlunparse
 from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
@@ -69,7 +70,17 @@ class DBConnectionService:
         except psycopg.OperationalError as e:
             # Log the full error for debugging but return a sanitized message to user
             error_details = str(e).strip()
-            logger.error(f"Database Connection Failed: {error_details}")
+<<<<<<< Updated upstream
+            # Mask any potential credentials in the error message before logging
+            secure_error_details = mask_connection_url(error_details)
+            logger.error(f"Database Connection Failed: {secure_error_details}")
+=======
+            
+            # Sanitize any credentials in the error message before logging
+            sanitized_details = re.sub(r'(://[^:]+):([^@]+)@', r'\1:******@', error_details)
+            
+            logger.error(f"Database Connection Failed: {sanitized_details}")
+>>>>>>> Stashed changes
 
             # Provide slightly more specific (but still safe) messages for common failure modes.
             details_lower = error_details.lower()
