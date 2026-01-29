@@ -173,7 +173,7 @@ def contains_command_injection_patterns(value: str) -> bool:
             if query_start == -1:
                 # No query string, semicolon in main URL is suspicious
                 # But check if it's URL-encoded semicolon which is okay
-                if '%3B' not in value.upper()[:semicolon_pos+3]:
+                if '%3B' not in value.upper()[max(0, semicolon_pos - 2):semicolon_pos + 3]:
                     # Check what comes after the semicolon
                     after_semicolon = value[semicolon_pos+1:semicolon_pos+10].strip().lower()
                     # Common command injection indicators
