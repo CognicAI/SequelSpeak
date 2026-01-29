@@ -2,50 +2,48 @@ import sys
 import os
 import logging
 from io import StringIO
+from unittest.mock import patch
+import psycopg
 
 # Add backend to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.db_connection_service import DBConnectionService
 
-# Test that credentials don't leak in logs
-def test_no_credentials_in_logs():
-    """Verify that connection URLs with credentials are not logged"""
-    
-    # Capture log output
+def test_service_sanitizes_error_logs():
+    """
+    Verify that DBConnectionService sanitizes credentials in error logs
+    when the underlying driver raises an exception containing the URL.
+    """
+    # Setup log capture
     log_stream = StringIO()
     handler = logging.StreamHandler(log_stream)
-    handler.setLevel(logging.ERROR)
-    
     logger = logging.getLogger('services.db_connection_service')
     logger.addHandler(handler)
     logger.setLevel(logging.ERROR)
     
-    # Test with a connection URL containing credentials
-    test_url = "postgres://testuser:secretpassword123@nonexistent-host.example.com:5432/testdb"
+    url = "postgres://user:supersecret@1.2.3.4:5432/db"
     
-    # This should fail to connect (host doesn't exist)
-    result = DBConnectionService.test_connection(test_url)
+    # Mock psycopg.connect to raise an OperationalError containing the URL
+    # This simulates a scenario where the driver returns the connection string in the error.
+    error_msg = f"FATAL: password authentication failed for {url}"
     
-    # Get the log output
-    log_output = log_stream.getvalue()
-    
-    # Verify the connection failed (expected)
-    assert result.success is False
-    
-    # Verify credentials are NOT in the log output
-    assert "secretpassword123" not in log_output, "Password found in logs!"
-    assert test_url not in log_output, "Full connection URL found in logs!"
-    
-    # Verify that some error was logged (we should log errors, just not credentials)
-    assert len(log_output) > 0, "No error was logged"
-    assert "Database Connection Failed" in log_output
-    
-    # Clean up
+    with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
+        result = DBConnectionService.test_connection(url)
+        
+        assert result.success is False
+        
+        logs = log_stream.getvalue()
+        
+        # Verify the password is NOT in the logs
+        assert "supersecret" not in logs, "Password leaked in logs!"
+        
+        # Verify the masked version IS in the logs
+        assert "user:******@" in logs, "Sanitization did not occur in logs!"
+        
+    # Cleanup
     logger.removeHandler(handler)
-    
     print("✅ PASSED: No credentials leaked in logs")
-    print(f"Log output (sanitized): {log_output[:200]}...")
 
 if __name__ == "__main__":
-    test_no_credentials_in_logs()
+    test_service_sanitizes_error_logs()
