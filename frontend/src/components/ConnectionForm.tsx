@@ -4,6 +4,7 @@ import { cn } from '../lib/utils';
 import type { TestConnectionSuccessResponse, TestConnectionErrorResponse } from '../types/api';
 import { getErrorMessage } from '../types/api';
 import { ProfileSelector } from './ProfileSelector';
+import { ConnectionStatusBanner, type ConnectionStatus } from './ConnectionStatusBanner';
 import { useProfileSelection } from '../hooks/useProfileSelection';
 import type { ConnectionProfile } from '../types/profile';
 import { saveProfile } from '../services/profileStorage';
@@ -119,6 +120,10 @@ export function ConnectionForm() {
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
+    // Connection status tracking for notifications
+    const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
+    const wasDisconnectedRef = useRef(false);
+
     // AbortController ref for cancelling in-flight requests
     const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -163,6 +168,12 @@ export function ConnectionForm() {
             if (response.ok) {
                 const successData = data as TestConnectionSuccessResponse;
 
+                // Check if recovering from a disconnected state
+                if (wasDisconnectedRef.current) {
+                    setConnectionStatus('connected');
+                    wasDisconnectedRef.current = false;
+                }
+
                 // Save profile to LocalStorage after successful connection
                 const result = saveProfile(connectionUrl);
 
@@ -183,6 +194,13 @@ export function ConnectionForm() {
                 }
             } else {
                 const errorData = data as TestConnectionErrorResponse;
+
+                // Check for CONNECTION_LOST error code
+                if (errorData.error_code === 'CONNECTION_LOST') {
+                    setConnectionStatus('disconnected');
+                    wasDisconnectedRef.current = true;
+                }
+
                 setStatusMessage({
                     type: 'error',
                     text: getErrorMessage(errorData.detail)
@@ -203,6 +221,11 @@ export function ConnectionForm() {
     return (
         <div className="w-full max-w-md mx-auto p-1 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 shadow-2xl backdrop-blur-xl border border-white/10">
             <div className="bg-background/80 rounded-xl p-8 transition-all duration-300">
+                {/* Connection Status Banner */}
+                <ConnectionStatusBanner
+                    status={connectionStatus}
+                    onDismiss={() => setConnectionStatus('unknown')}
+                />
                 <div className="flex flex-col items-center gap-6">
                     <div className={cn(
                         "p-4 rounded-full bg-primary/10 transition-all duration-500 relative",
