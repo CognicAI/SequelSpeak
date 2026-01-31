@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Wifi, WifiOff, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CONNECTION_STATUS_MESSAGES } from '../types/api';
@@ -27,6 +27,12 @@ export function ConnectionStatusBanner({
     const [isVisible, setIsVisible] = useState(false);
     const [displayStatus, setDisplayStatus] = useState<ConnectionStatus>(status);
 
+    // Store callback in ref to avoid timer resets on parent re-renders
+    const onDismissRef = useRef(onDismiss);
+    useEffect(() => {
+        onDismissRef.current = onDismiss;
+    }, [onDismiss]);
+
     useEffect(() => {
         if (status === 'disconnected') {
             setDisplayStatus('disconnected');
@@ -37,14 +43,14 @@ export function ConnectionStatusBanner({
             // Auto-dismiss after delay
             const timer = setTimeout(() => {
                 setIsVisible(false);
-                onDismiss?.();
+                onDismissRef.current?.();
             }, autoDismissDelay);
             return () => clearTimeout(timer);
         } else {
             // 'unknown' - hide the banner
             setIsVisible(false);
         }
-    }, [status, autoDismissDelay, onDismiss]);
+    }, [status, autoDismissDelay]);
 
     if (!isVisible) {
         return null;
