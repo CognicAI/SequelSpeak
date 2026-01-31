@@ -19,6 +19,7 @@ class ErrorCode(str, Enum):
     # Network & Connectivity
     HOST_UNREACHABLE = "HOST_UNREACHABLE"
     TIMEOUT = "TIMEOUT"
+    CONNECTION_LOST = "CONNECTION_LOST"  # Runtime connection drop
     
     # SSL/TLS issues
     SSL_ERROR = "SSL_ERROR"
