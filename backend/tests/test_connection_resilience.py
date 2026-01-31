@@ -346,7 +346,7 @@ class TestCredentialSafety:
         """Test that credentials are masked in log messages."""
         @detect_connection_failure
         def failing_with_url():
-            raise psycopg.InterfaceError("Error for postgres://user:secret@host/db")
+            raise psycopg.InterfaceError("connection closed for postgres://user:secret@host/db")
 
         failing_with_url()
         
@@ -354,8 +354,9 @@ class TestCredentialSafety:
         log_call_args = [str(call) for call in mock_logger.error.call_args_list]
         log_messages = " ".join(log_call_args)
         
-        # Credentials should be masked
-        assert "secret" not in log_messages or "***" in log_messages
+        # Credentials should be masked: the raw secret must not appear, and masked value should.
+        assert "secret" not in log_messages
+        assert "***" in log_messages
 
 
 # ============================================================================

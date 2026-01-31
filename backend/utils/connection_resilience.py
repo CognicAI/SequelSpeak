@@ -6,6 +6,7 @@ errors correctly without crashing the application.
 """
 
 import logging
+import threading
 from enum import Enum
 from functools import wraps
 from typing import Callable, Optional, Any
@@ -109,12 +110,17 @@ def detect_connection_failure(func: Callable) -> Callable:
         except psycopg.InterfaceError as e:
             # Interface errors typically mean invalid connection state
             secure_error_msg = mask_connection_url(str(e))
-            logger.error(f"Database connection interface error: {secure_error_msg}")
-            return ConnectionResult(
-                success=False,
-                message="Database connection was lost. Please try again.",
-                error_code=ErrorCode.CONNECTION_LOST
-            )
+            
+            if is_connection_lost_error(e):
+                logger.error(f"Database connection interface error: {secure_error_msg}")
+                return ConnectionResult(
+                    success=False,
+                    message="Database connection was lost. Please try again.",
+                    error_code=ErrorCode.CONNECTION_LOST
+                )
+            else:
+                # Re-raise non-connection-lost interface errors
+                raise
         except psycopg.OperationalError as e:
             error_msg = str(e)
             secure_error_msg = mask_connection_url(error_msg)
@@ -155,8 +161,9 @@ class ConnectionHealthMonitor:
     """
     Monitors and tracks the health state of a database connection.
     
-    This class provides methods to check connection health and track
-    state changes for use by health check endpoints or reconnection logic.
+    This class is thread-safe and safe for concurrent FastAPI workers/threads.
+    It provides methods to check connection health and track state changes 
+    for use by health check endpoints or reconnection logic.
     
     Attributes:
         state: Current connection state (CONNECTED, DISCONNECTED, UNKNOWN)
@@ -168,33 +175,40 @@ class ConnectionHealthMonitor:
         """Initialize the health monitor with unknown state."""
         self._state: ConnectionState = ConnectionState.UNKNOWN
         self._consecutive_failures: int = 0
+        self._lock = threading.RLock()
     
     @property
     def state(self) -> ConnectionState:
         """Get the current connection state."""
-        return self._state
+        with self._lock:
+            return self._state
     
     @property
     def is_healthy(self) -> bool:
         """Check if the connection is currently healthy."""
-        return self._state == ConnectionState.CONNECTED
+        with self._lock:
+            return self._state == ConnectionState.CONNECTED
     
     @property
     def consecutive_failures(self) -> int:
         """Get the number of consecutive connection failures."""
-        return self._consecutive_failures
+        with self._lock:
+            return self._consecutive_failures
     
     def mark_healthy(self) -> None:
         """Mark the connection as healthy and reset failure count."""
-        self._state = ConnectionState.CONNECTED
-        self._consecutive_failures = 0
+        with self._lock:
+            self._state = ConnectionState.CONNECTED
+            self._consecutive_failures = 0
         logger.debug("Connection marked as healthy")
     
     def mark_unhealthy(self) -> None:
         """Mark the connection as unhealthy and increment failure count."""
-        self._state = ConnectionState.DISCONNECTED
-        self._consecutive_failures += 1
-        logger.warning(f"Connection marked as unhealthy (consecutive failures: {self._consecutive_failures})")
+        with self._lock:
+            self._state = ConnectionState.DISCONNECTED
+            self._consecutive_failures += 1
+            failures = self._consecutive_failures
+        logger.warning(f"Connection marked as unhealthy (consecutive failures: {failures})")
     
     def check_connection(self, url: str, timeout: int = 5) -> ConnectionResult:
         """
