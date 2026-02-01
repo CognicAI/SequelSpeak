@@ -8,9 +8,16 @@ export type ConnectionErrorCode =
     | 'DATABASE_NOT_FOUND'
     | 'HOST_UNREACHABLE'
     | 'TIMEOUT'
+    | 'CONNECTION_LOST'
     | 'SSL_ERROR'
     | 'INVALID_URL'
     | 'CONNECTION_ERROR';
+
+/** User-friendly messages for connection status changes (no technical jargon) */
+export const CONNECTION_STATUS_MESSAGES = {
+    lost: "Unable to reach the database. Please check your connection.",
+    restored: "Connection restored successfully!",
+} as const;
 
 /** Successful test connection response */
 export interface TestConnectionSuccessResponse {
