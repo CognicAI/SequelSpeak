@@ -58,6 +58,9 @@ def is_connection_lost_error(exception: Exception) -> bool:
     For example, a "host unreachable" error is an initial failure, while
     "connection closed unexpectedly" is a runtime drop.
     
+    SSL errors and timeout errors are NOT considered retryable connection losses
+    as they indicate configuration or network issues that won't resolve with retry.
+    
     Args:
         exception: The exception to analyze
         
@@ -74,6 +77,28 @@ def is_connection_lost_error(exception: Exception) -> bool:
     # psycopg.OperationalError can indicate connection drops during operations
     if isinstance(exception, psycopg.OperationalError):
         error_msg = str(exception).lower()
+        
+        # Explicitly exclude SSL/TLS errors - these indicate configuration issues
+        # and should not be retried
+        ssl_patterns = [
+            "ssl error", "ssl connection", "ssl handshake", "ssl syscall",
+            "certificate verify", "certificate validation", "certificate_verify_failed",
+            "tlsv1", "ssl_error", "certificate expired", "certificate invalid",
+            "self-signed certificate"
+        ]
+        if any(pattern in error_msg for pattern in ssl_patterns):
+            return False
+        
+        # Explicitly exclude timeout errors - these indicate network/performance issues
+        # that won't resolve with immediate retry
+        # However, "connection timed out during operation" indicates a dropped connection
+        # and should be retryable
+        if "timeout expired" in error_msg or "connection timeout" in error_msg:
+            return False
+        # "timed out" is excluded unless it's part of "during operation"
+        if "timed out" in error_msg and "during operation" not in error_msg:
+            return False
+        
         # Check for connection lost patterns
         if any(pattern in error_msg for pattern in CONNECTION_LOST_PATTERNS):
             return True
