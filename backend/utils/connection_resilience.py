@@ -185,10 +185,6 @@ def detect_connection_failure(func: Callable) -> Callable:
     return wrapper
 
 
-def retry_on_connection_failure(
-    max_retries: int = 3,
-    initial_delay: float = 1.0,
-    backoff_factor: float = 2.0
 class ConnectionHealthMonitor:
     """
     Monitors and tracks the health state of a database connection.

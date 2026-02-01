@@ -185,8 +185,10 @@ class DBConnectionService:
                     )
 
                 # Network / connectivity / host/port issues
+                # Note: "SSL SYSCALL" errors are network errors during SSL handshake, not config issues
                 elif (
-                    "could not connect to server" in details_lower
+                    "ssl syscall" in details_lower
+                    or "could not connect to server" in details_lower
                     or "connection refused" in details_lower
                     or "could not translate host name" in details_lower
                     or "network is unreachable" in details_lower
