@@ -7,14 +7,17 @@ errors correctly without crashing the application.
 
 import logging
 import threading
+import time
 from enum import Enum
 from functools import wraps
-from typing import Callable, Optional, Any
+from typing import Callable, Optional, Any, TypeVar, cast
 
 import psycopg
 
 from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
+
+T = TypeVar("T")
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -155,6 +158,83 @@ def detect_connection_failure(func: Callable) -> Callable:
             )
     
     return wrapper
+
+
+def retry_on_connection_failure(
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+    backoff_factor: float = 2.0
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """
+    Decorator that retries a database operation if a connection failure is detected.
+    
+    This decorator:
+    1. Identifies if an exception/result indicates a lost connection.
+    2. Retries the operation with exponential backoff.
+    3. Updates the health monitor state on success or failure.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        initial_delay: Delay before the first retry in seconds
+        backoff_factor: Factor by which the delay increases each retry
+        
+    Returns:
+        Decorator function
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            retries = 0
+            delay = initial_delay
+            
+            while True:
+                try:
+                    result = func(*args, **kwargs)
+                    
+                    # If result is a ConnectionResult and it's successful, mark healthy
+                    if isinstance(result, ConnectionResult):
+                        if result.success:
+                            health_monitor.mark_healthy()
+                            return result
+                        # If it failed but it's a CONNECTION_LOST, we might want to retry
+                        elif result.error_code == ErrorCode.CONNECTION_LOST:
+                            if retries >= max_retries:
+                                health_monitor.mark_unhealthy()
+                                return result
+                            # Fall through to retry logic
+                        else:
+                            # Other failures (auth, etc) shouldn't be retried
+                            return result
+                    else:
+                        # Non-ConnectionResult success
+                        health_monitor.mark_healthy()
+                        return result
+                        
+                except Exception as e:
+                    # Check if this exception indicates a connection loss
+                    if not is_connection_lost_error(e):
+                        # Re-raise non-connection errors
+                        raise
+                    
+                    # If we've hit max retries, mark unhealthy and re-raise (or handle)
+                    if retries >= max_retries:
+                        health_monitor.mark_unhealthy()
+                        raise
+                
+                # If we reach here, we are retrying
+                retries += 1
+                health_monitor.mark_unhealthy()
+                
+                logger.warning(
+                    f"Connection lost during {func.__name__}. "
+                    f"Retrying in {delay:.1f}s... (Attempt {retries}/{max_retries})"
+                )
+                
+                time.sleep(delay)
+                delay *= backoff_factor
+                
+        return cast(Callable[..., T], wrapper)
+    return decorator
 
 
 class ConnectionHealthMonitor:
