@@ -2,7 +2,7 @@
 Simulation script to verify connection loss detection and auto-recovery behavior.
 
 This script mocks psycopg.connect to simulate connection failures and verifies that:
-1. The retry decorator attempts reconnection with exponential backoff
+1. The retry logic attempts reconnection with exponential backoff
 2. Retry limits are respected
 3. The health monitor tracks state correctly
 4. User notifications (ConnectionResult messages) are appropriate
