@@ -188,7 +188,6 @@ class DBConnectionService:
                 elif (
                     "could not connect to server" in details_lower
                     or "connection refused" in details_lower
-                    or "connection reset" in details_lower
                     or "could not translate host name" in details_lower
                     or "network is unreachable" in details_lower
                 ):
