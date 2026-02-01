@@ -73,7 +73,7 @@ class DBConnectionService:
         retries = 0
         delay = initial_delay
         
-        while True:
+        while retries <= max_retries:
             try:
                 with psycopg.connect(url, connect_timeout=settings.db_connection_timeout) as conn:
                     with conn.cursor() as cur:
