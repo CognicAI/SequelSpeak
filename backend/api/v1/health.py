@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from schemas.health import HealthCheckResponse, DatabaseHealthStatus
 from utils.connection_resilience import health_monitor, ConnectionState
@@ -43,27 +43,20 @@ Check the health of the API and database connectivity.
     operation_id="health_check",
     tags=["Health"]
 )
-async def health_check(
-    db_url: Optional[str] = Query(
-        default=None,
-        description="Database URL to check (uses default if not provided)",
-        include_in_schema=False  # Hide from OpenAPI to avoid credential exposure
-    )
-) -> HealthCheckResponse:
+async def health_check() -> HealthCheckResponse:
     """
     Perform health check including database connectivity test.
     
-    Args:
-        db_url: Optional database URL to check. If not provided, uses 
-                configured health check URL or returns 'unknown' status.
+    Uses the configured HEALTH_CHECK_DB_URL environment variable.
+    If not configured, returns 'unknown' database status.
     
     Returns:
         HealthCheckResponse with API status and database health details.
     """
     timestamp = datetime.now(timezone.utc).isoformat()
     
-    # Determine which URL to check
-    check_url = db_url or getattr(settings, 'health_check_db_url', None)
+    # Only use configured URL - no user input accepted (SSRF prevention)
+    check_url = settings.health_check_db_url
     
     if not check_url:
         # No URL configured - return unknown status
