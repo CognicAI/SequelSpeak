@@ -49,7 +49,37 @@ async def lifespan(app: FastAPI):
     # Shutdown logic (if any) goes here
     pass
 
-app = FastAPI(title="SequelSpeak Backend API", lifespan=lifespan)
+app = FastAPI(
+    title="SequelSpeak Backend API",
+    description="""
+## SequelSpeak Backend API
+
+Natural language SQL query interface with PostgreSQL connection management.
+
+### Features
+- **Database Connection**: Secure PostgreSQL connection with validation
+- **Health Monitoring**: Real-time database connectivity status
+- **Error Handling**: Structured error responses with actionable messages
+
+### Authentication
+Currently, this API does not require authentication. Database credentials are passed per-request.
+    """,
+    version="1.0.0",
+    lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "Health",
+            "description": "Health check endpoints for monitoring API and database connectivity."
+        },
+        {
+            "name": "Utils",
+            "description": "Utility endpoints for database connection testing and validation."
+        }
+    ],
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
 
 # Configure CORS from settings
 app.add_middleware(

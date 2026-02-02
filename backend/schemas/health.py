@@ -53,14 +53,47 @@ class HealthCheckResponse(BaseModel):
     
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {
-                "status": "ok",
-                "timestamp": "2026-02-02T16:15:00+00:00",
-                "database": {
-                    "status": "connected",
-                    "latency_ms": 15,
-                    "consecutive_failures": 0
+            "examples": [
+                {
+                    "summary": "Database Connected",
+                    "description": "Healthy response when database is reachable",
+                    "value": {
+                        "status": "ok",
+                        "timestamp": "2026-02-02T16:15:00+00:00",
+                        "database": {
+                            "status": "connected",
+                            "latency_ms": 15,
+                            "consecutive_failures": 0
+                        }
+                    }
+                },
+                {
+                    "summary": "Database Unavailable",
+                    "description": "Response when database connection fails",
+                    "value": {
+                        "status": "ok",
+                        "timestamp": "2026-02-02T16:15:00+00:00",
+                        "database": {
+                            "status": "unavailable",
+                            "latency_ms": 2000,
+                            "consecutive_failures": 3
+                        }
+                    }
+                },
+                {
+                    "summary": "Database Unknown",
+                    "description": "Response when no database URL is configured",
+                    "value": {
+                        "status": "ok",
+                        "timestamp": "2026-02-02T16:15:00+00:00",
+                        "database": {
+                            "status": "unknown",
+                            "latency_ms": None,
+                            "consecutive_failures": 0
+                        }
+                    }
                 }
-            }
+            ]
         }
     )
+

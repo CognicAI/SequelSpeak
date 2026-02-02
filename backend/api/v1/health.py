@@ -33,11 +33,58 @@ Check the health of the API and database connectivity.
 - `connected`: Database is reachable and responding
 - `unavailable`: Database connection failed
 - `unknown`: No connection URL configured or never checked
+
+**Configuration:**
+Set `HEALTH_CHECK_DB_URL` environment variable to enable database health checks.
     """,
     responses={
         200: {
             "description": "Health check completed (API is always healthy if responding)",
-            "model": HealthCheckResponse
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "connected": {
+                            "summary": "Database Connected",
+                            "description": "Database is reachable and responding normally",
+                            "value": {
+                                "status": "ok",
+                                "timestamp": "2026-02-02T16:15:00+00:00",
+                                "database": {
+                                    "status": "connected",
+                                    "latency_ms": 15,
+                                    "consecutive_failures": 0
+                                }
+                            }
+                        },
+                        "unavailable": {
+                            "summary": "Database Unavailable",
+                            "description": "Database connection failed or timed out",
+                            "value": {
+                                "status": "ok",
+                                "timestamp": "2026-02-02T16:15:00+00:00",
+                                "database": {
+                                    "status": "unavailable",
+                                    "latency_ms": 2000,
+                                    "consecutive_failures": 3
+                                }
+                            }
+                        },
+                        "unknown": {
+                            "summary": "Database Unknown",
+                            "description": "No HEALTH_CHECK_DB_URL configured",
+                            "value": {
+                                "status": "ok",
+                                "timestamp": "2026-02-02T16:15:00+00:00",
+                                "database": {
+                                    "status": "unknown",
+                                    "latency_ms": None,
+                                    "consecutive_failures": 0
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     operation_id="health_check",
