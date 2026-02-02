@@ -12,7 +12,6 @@ Tests cover:
 import sys
 import os
 from unittest.mock import patch
-import pytest
 from fastapi.testclient import TestClient
 
 # Add backend to path to import modules
