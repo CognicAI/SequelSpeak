@@ -87,7 +87,7 @@ async def database_connection_error_handler(request: Request, exc: DatabaseConne
 
 
 app.include_router(connection.router, prefix="/api/v1/utils", tags=["Utils"])
-app.include_router(health.router, prefix="/api/v1")
+app.include_router(health.router, prefix="/api/v1", tags=["Health"])
 
 @app.get("/")
 async def root():

@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Database Settings
     db_connection_timeout: int = 10  # Database connection timeout in seconds
     
+    # Health Check Settings
+    health_check_timeout: int = 2  # Health check timeout in seconds (keep low for fast response)
+    health_check_db_url: Optional[str] = None  # Default database URL for health checks
+    
     @field_validator('environment')
     @classmethod
     def validate_environment(cls, v: str) -> str:
@@ -78,6 +82,22 @@ class Settings(BaseSettings):
                 f"Consider reducing to avoid long hangs.",
                 file=sys.stderr
             )
+        return v
+    
+    @field_validator('health_check_timeout')
+    @classmethod
+    def validate_health_check_timeout(cls, v: int) -> int:
+        """Ensure health check timeout is positive and reasonably low for fast response."""
+        if v <= 0:
+            raise ValueError(f"health_check_timeout must be positive, got: {v}")
+        if v > 10:
+            print(
+                f"WARNING: health_check_timeout is high ({v}s). "
+                f"Consider keeping under 10s for fast /health responses.",
+                file=sys.stderr
+            )
+            # Cap at 10 seconds to prevent long hangs
+            return 10
         return v
     
     def get_allowed_origins_list(self) -> List[str]:
