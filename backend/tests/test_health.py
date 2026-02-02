@@ -74,33 +74,34 @@ class TestDatabaseHealthStatus:
 
     def test_database_connected_status(self):
         """Test health check with successful database connection."""
-        with patch('api.v1.health.health_monitor') as mock_monitor:
+        with patch('api.v1.health.health_monitor') as mock_monitor, patch('api.v1.health.settings') as mock_settings:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=True,
                 message="Connection is healthy"
             )
             mock_monitor.consecutive_failures = 0
-            
-            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
+            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
+
+            response = client.get("/api/v1/health")
             data = response.json()
-            
+
             assert response.status_code == 200
             assert data["database"]["status"] == "connected"
             assert data["database"]["consecutive_failures"] == 0
 
     def test_database_unavailable_status(self):
         """Test health check with failed database connection."""
-        with patch('api.v1.health.health_monitor') as mock_monitor:
+        with patch('api.v1.health.health_monitor') as mock_monitor, patch('api.v1.health.settings') as mock_settings:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=False,
                 message="Connection failed",
                 error_code=ErrorCode.HOST_UNREACHABLE
             )
             mock_monitor.consecutive_failures = 3
-            
-            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
+            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
+
+            response = client.get("/api/v1/health")
             data = response.json()
-            
             assert response.status_code == 200  # Always 200
             assert data["database"]["status"] == "unavailable"
             assert data["database"]["consecutive_failures"] == 3
