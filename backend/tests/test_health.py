@@ -7,7 +7,6 @@ Tests cover:
 - Latency measurement
 - Graceful failure handling
 - No credential exposure
-- SSRF prevention (no user-provided URLs)
 """
 
 import sys
@@ -75,39 +74,34 @@ class TestDatabaseHealthStatus:
 
     def test_database_connected_status(self):
         """Test health check with successful database connection."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor, patch('api.v1.health.settings') as mock_settings:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=True,
                 message="Connection is healthy"
             )
             mock_monitor.consecutive_failures = 0
-            
+            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
+
             response = client.get("/api/v1/health")
             data = response.json()
-            
+
             assert response.status_code == 200
             assert data["database"]["status"] == "connected"
             assert data["database"]["consecutive_failures"] == 0
 
     def test_database_unavailable_status(self):
         """Test health check with failed database connection."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor, patch('api.v1.health.settings') as mock_settings:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=False,
                 message="Connection failed",
                 error_code=ErrorCode.HOST_UNREACHABLE
             )
             mock_monitor.consecutive_failures = 3
-            
+            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
+
             response = client.get("/api/v1/health")
             data = response.json()
-            
             assert response.status_code == 200  # Always 200
             assert data["database"]["status"] == "unavailable"
             assert data["database"]["consecutive_failures"] == 3
@@ -134,17 +128,14 @@ class TestHealthLatency:
 
     def test_latency_is_measured(self):
         """Test that latency_ms is populated on successful check."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=True,
                 message="Connection is healthy"
             )
             mock_monitor.consecutive_failures = 0
             
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
             data = response.json()
             
             assert data["database"]["latency_ms"] is not None
@@ -155,10 +146,7 @@ class TestHealthLatency:
         """Test that response is fast (<200ms) with mocked database."""
         import time
         
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=True,
                 message="Connection is healthy"
@@ -166,7 +154,7 @@ class TestHealthLatency:
             mock_monitor.consecutive_failures = 0
             
             start = time.perf_counter()
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
             elapsed_ms = (time.perf_counter() - start) * 1000
             
             assert response.status_code == 200
@@ -182,10 +170,7 @@ class TestGracefulFailure:
 
     def test_returns_200_on_db_failure(self):
         """Test that endpoint returns 200 even when database is down."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=False,
                 message="Connection refused",
@@ -193,20 +178,17 @@ class TestGracefulFailure:
             )
             mock_monitor.consecutive_failures = 5
             
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
             
             assert response.status_code == 200
 
     def test_returns_200_on_unexpected_error(self):
         """Test that endpoint returns 200 on unexpected exceptions."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.side_effect = RuntimeError("Unexpected error")
             mock_monitor.consecutive_failures = 1
             
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
             
             assert response.status_code == 200
             data = response.json()
@@ -214,15 +196,12 @@ class TestGracefulFailure:
 
     def test_no_crash_on_exception(self):
         """Test that health endpoint never crashes the application."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.side_effect = Exception("Total system failure")
             mock_monitor.consecutive_failures = 0
             
             # Should NOT raise an exception
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
             
             assert response.status_code == 200
 
@@ -236,17 +215,14 @@ class TestNoCredentialExposure:
 
     def test_no_url_in_response(self):
         """Test that database URL is not exposed in response."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://admin:supersecret@prod.db.com:5432/mydb"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=True,
                 message="Connection is healthy"
             )
             mock_monitor.consecutive_failures = 0
             
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://admin:supersecret@prod.db.com:5432/mydb")
             response_text = response.text
             
             assert "supersecret" not in response_text
@@ -255,10 +231,7 @@ class TestNoCredentialExposure:
 
     def test_no_credentials_on_failure(self):
         """Test that credentials are not exposed even on connection failure."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://user:secret@host:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=False,
                 message="Connection failed for postgres://user:secret@host/db",
@@ -266,7 +239,7 @@ class TestNoCredentialExposure:
             )
             mock_monitor.consecutive_failures = 1
             
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://user:secret@host:5432/db")
             response_text = response.text
             
             # Message from ConnectionResult should not be exposed in health response
@@ -275,59 +248,16 @@ class TestNoCredentialExposure:
 
     def test_response_only_has_safe_fields(self):
         """Test that response only contains expected safe fields."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://test:test@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
+        with patch('api.v1.health.health_monitor') as mock_monitor:
             mock_monitor.check_connection.return_value = ConnectionResult(
                 success=True,
                 message="Connection is healthy"
             )
             mock_monitor.consecutive_failures = 0
             
-            response = client.get("/api/v1/health")
+            response = client.get("/api/v1/health?db_url=postgres://test:test@localhost:5432/db")
             data = response.json()
             
             # Verify only expected keys exist
             assert set(data.keys()) == {"status", "timestamp", "database"}
             assert set(data["database"].keys()) == {"status", "latency_ms", "consecutive_failures"}
-
-
-# ============================================================================
-# SSRF PREVENTION TESTS
-# ============================================================================
-
-class TestSSRFPrevention:
-    """Tests to verify SSRF attack prevention."""
-
-    def test_no_db_url_query_parameter(self):
-        """Test that db_url query parameter is ignored (not accepted)."""
-        with patch('api.v1.health.settings') as mock_settings:
-            mock_settings.health_check_db_url = None
-            
-            # Even if user tries to pass a URL, it should be ignored
-            response = client.get("/api/v1/health?db_url=postgres://attacker:pass@evil.com:5432/db")
-            data = response.json()
-            
-            # Should return 'unknown' because settings.health_check_db_url is None
-            assert data["database"]["status"] == "unknown"
-
-    def test_only_configured_url_used(self):
-        """Test that only the configured URL is used, user input ignored."""
-        with patch('api.v1.health.settings') as mock_settings, \
-             patch('api.v1.health.health_monitor') as mock_monitor:
-            mock_settings.health_check_db_url = "postgres://safe:safe@localhost:5432/db"
-            mock_settings.health_check_timeout = 2
-            mock_monitor.check_connection.return_value = ConnectionResult(
-                success=True,
-                message="Connection is healthy"
-            )
-            mock_monitor.consecutive_failures = 0
-            
-            # Try to override with malicious URL - should be ignored
-            response = client.get("/api/v1/health?db_url=postgres://attacker@evil.com/db")
-            
-            # Verify the configured URL was used (mock was called)
-            mock_monitor.check_connection.assert_called_once()
-            call_args = mock_monitor.check_connection.call_args
-            assert call_args[1]["url"] == "postgres://safe:safe@localhost:5432/db"

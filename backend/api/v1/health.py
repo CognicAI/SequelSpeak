@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter
 
 from schemas.health import HealthCheckResponse, DatabaseHealthStatus
-from utils.connection_resilience import health_monitor, ConnectionState
+from utils.connection_resilience import health_monitor
 from config import settings
 
 # Configure logger
