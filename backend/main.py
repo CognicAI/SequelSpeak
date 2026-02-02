@@ -72,8 +72,8 @@ Currently, this API does not require authentication. Database credentials are pa
             "description": "Health check endpoints for monitoring API and database connectivity."
         },
         {
-            "name": "Utils",
-            "description": "Utility endpoints for database connection testing and validation."
+            "name": "Connection",
+            "description": "Database connection testing and validation endpoints."
         }
     ],
     docs_url="/docs",
@@ -116,8 +116,8 @@ async def database_connection_error_handler(request: Request, exc: DatabaseConne
 
 
 
-app.include_router(connection.router, prefix="/api/v1/utils", tags=["Utils"])
-app.include_router(health.router, prefix="/api/v1", tags=["Health"])
+app.include_router(connection.router, prefix="/api/v1/utils")
+app.include_router(health.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
