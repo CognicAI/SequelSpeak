@@ -40,6 +40,7 @@ Set `HEALTH_CHECK_DB_URL` environment variable to enable database health checks.
     responses={
         200: {
             "description": "Health check completed (API is always healthy if responding)",
+            "model": HealthCheckResponse,
             "content": {
                 "application/json": {
                     "examples": {
