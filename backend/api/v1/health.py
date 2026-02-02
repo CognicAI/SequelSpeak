@@ -43,7 +43,7 @@ Check the health of the API and database connectivity.
     operation_id="health_check",
     tags=["Health"]
 )
-async def health_check() -> HealthCheckResponse:
+def health_check() -> HealthCheckResponse:
     """
     Perform health check including database connectivity test.
     
