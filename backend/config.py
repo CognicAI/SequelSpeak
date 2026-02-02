@@ -84,6 +84,22 @@ class Settings(BaseSettings):
             )
         return v
     
+    @field_validator('health_check_timeout')
+    @classmethod
+    def validate_health_check_timeout(cls, v: int) -> int:
+        """Ensure health check timeout is positive and reasonably low for fast response."""
+        if v <= 0:
+            raise ValueError(f"health_check_timeout must be positive, got: {v}")
+        if v > 10:
+            print(
+                f"WARNING: health_check_timeout is high ({v}s). "
+                f"Consider keeping under 10s for fast /health responses.",
+                file=sys.stderr
+            )
+            # Cap at 10 seconds to prevent long hangs
+            return 10
+        return v
+    
     def get_allowed_origins_list(self) -> List[str]:
         """Parse allowed_origins string into list."""
         if self.allowed_origins == "*":
