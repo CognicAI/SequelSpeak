@@ -56,7 +56,7 @@ class HealthCheckResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "status": "ok",
-                "timestamp": "2026-02-02T16:15:00Z",
+                "timestamp": "2026-02-02T16:15:00+00:00",
                 "database": {
                     "status": "connected",
                     "latency_ms": 15,
