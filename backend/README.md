@@ -22,6 +22,69 @@ APP_NAME=SequelSpeak Backend
 ENVIRONMENT=production
 ```
 
+## Health Endpoint
+
+The backend provides a health monitoring endpoint for checking API and database connectivity status.
+
+### Endpoint
+
+```
+GET /api/v1/health
+```
+
+### Response Structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | Always `"ok"` if API is responding |
+| `timestamp` | string | ISO 8601 timestamp of the health check |
+| `database.status` | string | Database connectivity status |
+| `database.latency_ms` | integer\|null | Response time in milliseconds |
+| `database.consecutive_failures` | integer | Number of consecutive failed checks |
+
+### Database Status Values
+
+| Status | Description |
+|--------|-------------|
+| `connected` | Database is reachable and responding |
+| `unavailable` | Database connection failed or timed out |
+| `unknown` | No `HEALTH_CHECK_DB_URL` configured |
+
+### Configuration
+
+Set the following environment variable to enable database health monitoring:
+
+```env
+HEALTH_CHECK_DB_URL=postgres://user:password@host:5432/database
+HEALTH_CHECK_TIMEOUT=2  # Optional, default: 2 seconds
+```
+
+### Example
+
+```bash
+curl http://localhost:8000/api/v1/health
+```
+
+**Response (database connected):**
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-02-02T16:15:00+00:00",
+  "database": {
+    "status": "connected",
+    "latency_ms": 15,
+    "consecutive_failures": 0
+  }
+}
+```
+
+### API Documentation
+
+Access interactive Swagger documentation at:
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+- OpenAPI JSON: `http://localhost:8000/openapi.json`
+
 ## PostgreSQL Connection
 
 The backend establishes PostgreSQL connections using `psycopg` with the following features:
