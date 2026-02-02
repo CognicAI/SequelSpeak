@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from api.v1 import connection
+from api.v1 import connection, health
 from exceptions import DatabaseConnectionError
 from config import settings
 import logging
@@ -87,6 +87,7 @@ async def database_connection_error_handler(request: Request, exc: DatabaseConne
 
 
 app.include_router(connection.router, prefix="/api/v1/utils", tags=["Utils"])
+app.include_router(health.router, prefix="/api/v1", tags=["Health"])
 
 @app.get("/")
 async def root():

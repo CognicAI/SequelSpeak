@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # Database Settings
     db_connection_timeout: int = 10  # Database connection timeout in seconds
     
+    # Health Check Settings
+    health_check_timeout: int = 2  # Health check timeout in seconds (keep low for fast response)
+    health_check_db_url: Optional[str] = None  # Default database URL for health checks
+    
     @field_validator('environment')
     @classmethod
     def validate_environment(cls, v: str) -> str:
