@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from api.v1 import connection
+from api.v1 import connection, health
 from exceptions import DatabaseConnectionError
 from config import settings
 import logging
@@ -49,7 +49,37 @@ async def lifespan(app: FastAPI):
     # Shutdown logic (if any) goes here
     pass
 
-app = FastAPI(title="SequelSpeak Backend API", lifespan=lifespan)
+app = FastAPI(
+    title="SequelSpeak Backend API",
+    description="""
+## SequelSpeak Backend API
+
+Natural language SQL query interface with PostgreSQL connection management.
+
+### Features
+- **Database Connection**: Secure PostgreSQL connection with validation
+- **Health Monitoring**: Real-time database connectivity status
+- **Error Handling**: Structured error responses with actionable messages
+
+### Authentication
+Currently, this API does not require authentication. Database credentials are passed per-request.
+    """,
+    version="1.0.0",
+    lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "Health",
+            "description": "Health check endpoints for monitoring API and database connectivity."
+        },
+        {
+            "name": "Connection",
+            "description": "Database connection testing and validation endpoints."
+        }
+    ],
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
 
 # Configure CORS from settings
 app.add_middleware(
@@ -86,7 +116,8 @@ async def database_connection_error_handler(request: Request, exc: DatabaseConne
 
 
 
-app.include_router(connection.router, prefix="/api/v1/utils", tags=["Utils"])
+app.include_router(connection.router, prefix="/api/v1/utils")
+app.include_router(health.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
