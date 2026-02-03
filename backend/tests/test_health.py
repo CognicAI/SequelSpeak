@@ -286,3 +286,134 @@ class TestNoCredentialExposure:
             # Verify only expected keys exist
             assert set(data.keys()) == {"status", "timestamp", "database"}
             assert set(data["database"].keys()) == {"status", "latency_ms", "consecutive_failures"}
+
+    def test_no_sensitive_data_in_headers(self):
+        """Test that response headers don't leak sensitive information."""
+        with patch('api.v1.health.health_monitor') as mock_monitor, \
+             patch('api.v1.health.settings') as mock_settings:
+            mock_monitor.check_connection.return_value = ConnectionResult(
+                success=True,
+                message="Connection is healthy"
+            )
+            mock_monitor.consecutive_failures = 0
+            mock_settings.health_check_db_url = "postgres://admin:secret@db.com:5432/prod"
+            mock_settings.health_check_timeout = 2
+            
+            response = client.get("/api/v1/health")
+            
+            # Check headers don't contain sensitive data
+            headers_str = str(response.headers).lower()
+            assert "secret" not in headers_str
+            assert "admin" not in headers_str
+            assert "db.com" not in headers_str
+
+
+# ============================================================================
+# COMPREHENSIVE INTEGRATION TESTS
+# ============================================================================
+
+class TestHealthEndpointIntegration:
+    """Comprehensive integration tests for all system states."""
+
+    def test_healthy_database_complete_flow(self):
+        """
+        SCENARIO: Healthy database state
+        - Database is reachable
+        - Latency is measured
+        - Response structure is valid
+        - No credentials exposed
+        """
+        with patch('api.v1.health.health_monitor') as mock_monitor, \
+             patch('api.v1.health.settings') as mock_settings:
+            mock_monitor.check_connection.return_value = ConnectionResult(
+                success=True,
+                message="Connection successful"
+            )
+            mock_monitor.consecutive_failures = 0
+            mock_settings.health_check_db_url = "postgres://user:pass@localhost:5432/db"
+            mock_settings.health_check_timeout = 2
+            
+            response = client.get("/api/v1/health")
+            data = response.json()
+            
+            # Status checks
+            assert response.status_code == 200
+            assert data["status"] == "ok"
+            assert data["database"]["status"] == "connected"
+            
+            # Structure validation
+            assert "timestamp" in data
+            assert "T" in data["timestamp"]
+            
+            # Latency validation
+            assert data["database"]["latency_ms"] is not None
+            assert isinstance(data["database"]["latency_ms"], int)
+            assert data["database"]["latency_ms"] >= 0
+            
+            # Failure tracking
+            assert data["database"]["consecutive_failures"] == 0
+            
+            # Security validation
+            assert "pass" not in response.text
+            assert "user" not in response.text
+
+    def test_database_down_complete_flow(self):
+        """
+        SCENARIO: Database is down/unreachable
+        - Database connection fails
+        - Endpoint still returns 200
+        - Status shows unavailable
+        - Consecutive failures tracked
+        - No credentials exposed
+        """
+        with patch('api.v1.health.health_monitor') as mock_monitor, \
+             patch('api.v1.health.settings') as mock_settings:
+            mock_monitor.check_connection.return_value = ConnectionResult(
+                success=False,
+                message="Database connection refused",
+                error_code=ErrorCode.HOST_UNREACHABLE
+            )
+            mock_monitor.consecutive_failures = 5
+            mock_settings.health_check_db_url = "postgres://admin:secret@db.example.com:5432/prod"
+            mock_settings.health_check_timeout = 2
+            
+            response = client.get("/api/v1/health")
+            data = response.json()
+            
+            # Graceful degradation - API still responds
+            assert response.status_code == 200
+            assert data["status"] == "ok"
+            
+            # Database status reflects failure
+            assert data["database"]["status"] == "unavailable"
+            
+            # Failure tracking works
+            assert data["database"]["consecutive_failures"] == 5
+            
+            # Latency still measured
+            assert data["database"]["latency_ms"] is not None
+            assert isinstance(data["database"]["latency_ms"], int)
+            
+            # Security - no credentials in response
+            assert "secret" not in response.text
+            assert "admin" not in response.text
+            assert "db.example.com" not in response.text
+
+    def test_no_database_url_configured(self):
+        """
+        SCENARIO: No database URL configured
+        - HEALTH_CHECK_DB_URL not set
+        - Returns unknown status
+        - No errors thrown
+        """
+        with patch('api.v1.health.settings') as mock_settings:
+            mock_settings.health_check_db_url = None
+            
+            response = client.get("/api/v1/health")
+            data = response.json()
+            
+            assert response.status_code == 200
+            assert data["status"] == "ok"
+            assert data["database"]["status"] == "unknown"
+            assert data["database"]["latency_ms"] is None
+            assert data["database"]["consecutive_failures"] == 0
