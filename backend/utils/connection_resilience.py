@@ -192,6 +192,10 @@ class ConnectionHealthMonitor:
     It provides methods to check connection health and track state changes 
     for use by health check endpoints or reconnection logic.
     
+    Health checks retry once on transient connection failures (CONNECTION_LOST)
+    to reduce false negatives from brief network glitches, while maintaining
+    fast response times for monitoring (no backoff delay).
+    
     Attributes:
         state: Current connection state (CONNECTED, DISCONNECTED, UNKNOWN)
         last_check_time: Timestamp of last health check
@@ -234,66 +238,89 @@ class ConnectionHealthMonitor:
             failures = self._consecutive_failures
         logger.warning(f"Connection marked as unhealthy (consecutive failures: {failures})")
     
-    async def check_connection(self, url: str, timeout: int = 5) -> ConnectionResult:
+    async def check_connection(self, url: str, timeout: int = 5, max_retries: int = 1) -> ConnectionResult:
         """
         Perform a lightweight async connection check using connection pool.
         
+        Retries once on transient connection failures to reduce false negatives
+        from brief network glitches, while keeping response time fast for monitoring.
+        
         Args:
             url: Database connection URL
-            timeout: Connection timeout in seconds
+            timeout: Connection timeout in seconds (default: 5)
+            max_retries: Maximum retry attempts for transient failures (default: 1)
             
         Returns:
             ConnectionResult indicating success or failure
+            
+        Note:
+            Unlike test_connection(), health checks use minimal retries (1 vs 2)
+            and no backoff delay to maintain fast monitoring response times.
         """
         # Import here to avoid circular dependency
         from services.connection_pool import pool_manager
         
-        try:
-            pool = await pool_manager.get_pool(url, min_size=1, max_size=1, timeout=timeout)
-            
-            async with pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute("SELECT 1")
-                    result = await cur.fetchone()
-                    if result == (1,):
-                        await self.mark_healthy()
-                        return ConnectionResult(
-                            success=True,
-                            message="Connection is healthy"
-                        )
-                    else:
-                        await self.mark_unhealthy()
-                        return ConnectionResult(
-                            success=False,
-                            message="Connection check failed",
-                            error_code=ErrorCode.CONNECTION_ERROR
-                        )
-        except psycopg.OperationalError as e:
-            secure_error_msg = mask_connection_url(str(e))
-            logger.error(f"Health check failed: {secure_error_msg}")
-            await self.mark_unhealthy()
-            
-            if is_connection_lost_error(e):
+        retries = 0
+        
+        while retries <= max_retries:
+            try:
+                pool = await pool_manager.get_pool(url, min_size=1, max_size=1, timeout=timeout)
+                
+                async with pool.connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT 1")
+                        result = await cur.fetchone()
+                        if result == (1,):
+                            await self.mark_healthy()
+                            return ConnectionResult(
+                                success=True,
+                                message="Connection is healthy"
+                            )
+                        else:
+                            await self.mark_unhealthy()
+                            return ConnectionResult(
+                                success=False,
+                                message="Connection check failed",
+                                error_code=ErrorCode.CONNECTION_ERROR
+                            )
+            except psycopg.OperationalError as e:
+                secure_error_msg = mask_connection_url(str(e))
+                logger.error(f"Health check failed: {secure_error_msg}")
+                
+                # Check if this is a transient connection lost error
+                if is_connection_lost_error(e) and retries < max_retries:
+                    retries += 1
+                    logger.warning(
+                        f"Health check connection lost. Retrying immediately... "
+                        f"(Attempt {retries}/{max_retries})"
+                    )
+                    # No delay - immediate retry for fast recovery detection
+                    continue
+                
+                # If we're here, either not retryable or retries exhausted
+                await self.mark_unhealthy()
+                
+                if is_connection_lost_error(e):
+                    return ConnectionResult(
+                        success=False,
+                        message="Database connection was lost",
+                        error_code=ErrorCode.CONNECTION_LOST
+                    )
+                else:
+                    return ConnectionResult(
+                        success=False,
+                        message="Database connection failed",
+                        error_code=ErrorCode.CONNECTION_ERROR
+                    )
+            except Exception as e:
+                secure_error_msg = mask_connection_url(str(e))
+                logger.error(f"Health check error: {secure_error_msg}")
+                await self.mark_unhealthy()
                 return ConnectionResult(
                     success=False,
-                    message="Database connection was lost",
-                    error_code=ErrorCode.CONNECTION_LOST
-                )
-            else:
-                return ConnectionResult(
-                    success=False,
-                    message="Database connection failed",
+                    message="Connection check failed unexpectedly",
                     error_code=ErrorCode.CONNECTION_ERROR
                 )
-        except Exception as e:
-            secure_error_msg = mask_connection_url(str(e))
-            logger.error(f"Health check error: {secure_error_msg}")
-            await self.mark_unhealthy()
-            return ConnectionResult(
-                success=False,
-                message="Connection check failed unexpectedly",
-                error_code=ErrorCode.CONNECTION_ERROR
-            )
 
 
 # Singleton health monitor instance for application-wide use

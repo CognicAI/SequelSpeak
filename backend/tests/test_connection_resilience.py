@@ -340,6 +340,135 @@ class TestConnectionHealthMonitor:
             
             assert result.success is False
             assert result.error_code == ErrorCode.CONNECTION_LOST
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_retries_on_transient_failure(self):
+        """Test that health check retries once on transient connection failure."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        # Create async mocks
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # First call: connection lost error
+        # Second call: success
+        call_count = [0]
+        
+        async def mock_execute(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise psycopg.OperationalError("connection closed")
+            # Second call succeeds
+            return None
+        
+        mock_cursor.execute = mock_execute
+        mock_cursor.fetchone = AsyncMock(return_value=(1,))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is True
+        assert result.message == "Connection is healthy"
+        # Verify execute was called twice (initial + 1 retry)
+        assert call_count[0] == 2
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_fails_after_max_retries(self):
+        """Test that health check fails after exhausting retries."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        # Mock to fail consistently with connection lost error
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # Always fail with connection lost
+        mock_cursor.execute = AsyncMock(side_effect=psycopg.OperationalError("connection closed"))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is False
+        assert result.error_code == ErrorCode.CONNECTION_LOST
+        # Verify execute was called twice (initial + 1 retry)
+        assert mock_cursor.execute.call_count == 2
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_no_retry_on_non_transient_error(self):
+        """Test that health check does not retry on non-transient errors."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # SSL error (non-retryable)
+        mock_cursor.execute = AsyncMock(side_effect=psycopg.OperationalError("SSL error: certificate verify failed"))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is False
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
+        # Verify execute was called only once (no retry)
+        assert mock_cursor.execute.call_count == 1
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_no_retry_on_auth_failure(self):
+        """Test that health check does not retry on authentication failures."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # Auth error (non-retryable)
+        mock_cursor.execute = AsyncMock(side_effect=psycopg.OperationalError("password authentication failed"))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is False
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
+        # Verify execute was called only once (no retry)
+        assert mock_cursor.execute.call_count == 1
 
 
 # ============================================================================
