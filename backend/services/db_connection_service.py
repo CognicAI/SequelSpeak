@@ -9,6 +9,7 @@ from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
 from utils.input_validator import validate_connection_url
 from utils.connection_resilience import is_connection_lost_error, health_monitor
+from utils.circuit_breaker import db_circuit_breaker, CircuitBreakerError
 from services.connection_pool import pool_manager
 
 # Configure logger
@@ -146,6 +147,7 @@ class DBConnectionService:
     async def test_connection_oneshot(url: str) -> ConnectionResult:
         """
         Test database connection using a one-shot connection (no pooling).
+        Protected by circuit breaker to prevent overwhelming the database.
         
         This method creates a direct connection that is immediately closed after testing,
         ensuring credentials are not cached in memory. Suitable for user-initiated
@@ -162,55 +164,68 @@ class DBConnectionService:
             and does not retry on transient failures. It's designed for interactive
             testing where immediate feedback is more important than resilience.
         """
+        # Wrap the actual connection test in circuit breaker
+        async def _test():
+            try:
+                # Create one-shot connection with timeout
+                async with await psycopg.AsyncConnection.connect(
+                    url,
+                    connect_timeout=settings.db_connection_timeout
+                ) as conn:
+                    # Test the connection with a simple query
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT 1")
+                        result = await cur.fetchone()
+                        
+                        if result == (1,):
+                            logger.info("One-shot connection test successful")
+                            return ConnectionResult(
+                                success=True,
+                                message="Connection successful!"
+                            )
+                        else:
+                            logger.warning("Connection test query returned unexpected result")
+                            return ConnectionResult(
+                                success=False,
+                                message="Connection verification query failed.",
+                                error_code=ErrorCode.CONNECTION_ERROR
+                            )
+                # Connection automatically closed when exiting context manager
+                
+            except psycopg.OperationalError as e:
+                error_details = str(e).strip()
+                secure_error_details = mask_connection_url(error_details)
+                logger.error(f"One-shot connection test failed: {secure_error_details}")
+                
+                # Classify the error using the ErrorClassifier
+                error_code, error_message = ErrorClassifier.classify_error(
+                    error_details,
+                    settings.db_connection_timeout
+                )
+                
+                return ConnectionResult(
+                    success=False,
+                    message=error_message,
+                    error_code=error_code
+                )
+                
+            except Exception as e:
+                secure_error_msg = mask_connection_url(str(e))
+                logger.error(f"Unexpected error during one-shot connection test: {secure_error_msg}")
+                return ConnectionResult(
+                    success=False,
+                    message="An unexpected error occurred while testing the connection.",
+                    error_code=ErrorCode.CONNECTION_ERROR
+                )
+        
+        # Execute with circuit breaker protection
         try:
-            # Create one-shot connection with timeout
-            async with await psycopg.AsyncConnection.connect(
-                url,
-                connect_timeout=settings.db_connection_timeout
-            ) as conn:
-                # Test the connection with a simple query
-                async with conn.cursor() as cur:
-                    await cur.execute("SELECT 1")
-                    result = await cur.fetchone()
-                    
-                    if result == (1,):
-                        logger.info("One-shot connection test successful")
-                        return ConnectionResult(
-                            success=True,
-                            message="Connection successful!"
-                        )
-                    else:
-                        logger.warning("Connection test query returned unexpected result")
-                        return ConnectionResult(
-                            success=False,
-                            message="Connection verification query failed.",
-                            error_code=ErrorCode.CONNECTION_ERROR
-                        )
-            # Connection automatically closed when exiting context manager
-            
-        except psycopg.OperationalError as e:
-            error_details = str(e).strip()
-            secure_error_details = mask_connection_url(error_details)
-            logger.error(f"One-shot connection test failed: {secure_error_details}")
-            
-            # Classify the error using the ErrorClassifier
-            error_code, error_message = ErrorClassifier.classify_error(
-                error_details,
-                settings.db_connection_timeout
-            )
-            
+            return await db_circuit_breaker.call(_test)
+        except CircuitBreakerError as e:
+            logger.warning(f"Circuit breaker blocked connection test: {e}")
             return ConnectionResult(
                 success=False,
-                message=error_message,
-                error_code=error_code
-            )
-            
-        except Exception as e:
-            secure_error_msg = mask_connection_url(str(e))
-            logger.error(f"Unexpected error during one-shot connection test: {secure_error_msg}")
-            return ConnectionResult(
-                success=False,
-                message="An unexpected error occurred while testing the connection.",
+                message=str(e),
                 error_code=ErrorCode.CONNECTION_ERROR
             )
 

@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     connection_retry_initial_delay: float = 1.0  # Initial retry delay in seconds (exponential backoff)
     health_check_retry_max: int = 1  # Maximum retries for health checks (keep low for fast response)
     
+    # Rate Limiting Settings
+    rate_limit_enabled: bool = True  # Enable rate limiting for API endpoints
+    rate_limit_per_minute: int = 10  # Maximum requests per minute per IP for test-connection endpoint
+    rate_limit_burst: int = 3  # Allow short bursts of this many requests
+    
+    # Circuit Breaker Settings
+    circuit_breaker_enabled: bool = True  # Enable circuit breaker for database connections
+    circuit_breaker_failure_threshold: int = 5  # Number of consecutive failures before opening circuit
+    circuit_breaker_timeout: int = 60  # Seconds to wait before trying again after circuit opens
+    
     @field_validator('environment')
     @classmethod
     def validate_environment(cls, v: str) -> str:

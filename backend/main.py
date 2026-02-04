@@ -11,10 +11,21 @@ import uuid
 from contextvars import ContextVar
 import time
 from services.connection_pool import pool_manager
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Initialize logging before anything else
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[],  # No global limits, apply per-endpoint
+    enabled=settings.rate_limit_enabled,
+    storage_uri="memory://"  # In-memory storage for rate limits
+)
 
 # Context variable for correlation ID (used by logging middleware)
 correlation_id_var: ContextVar[str] = ContextVar('correlation_id', default=None)
@@ -72,6 +83,7 @@ Natural language SQL query interface with PostgreSQL connection management.
 - **Database Connection**: Secure PostgreSQL connection with validation
 - **Health Monitoring**: Real-time database connectivity status
 - **Error Handling**: Structured error responses with actionable messages
+- **Rate Limiting**: Protection against abuse and DoS attacks
 
 ### Authentication
 Currently, this API does not require authentication. Database credentials are passed per-request.
@@ -92,6 +104,12 @@ Currently, this API does not require authentication. Database credentials are pa
     redoc_url="/redoc",
     openapi_url="/openapi.json"
 )
+
+# Add rate limiter state to app
+app.state.limiter = limiter
+
+# Add rate limit exceeded exception handler
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS from settings
 app.add_middleware(
