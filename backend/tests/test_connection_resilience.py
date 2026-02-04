@@ -241,49 +241,55 @@ class TestDetectConnectionFailureDecorator:
 class TestConnectionHealthMonitor:
     """Tests for the ConnectionHealthMonitor class."""
 
-    def test_initial_state_is_unknown(self):
+    @pytest.mark.asyncio
+    async def test_initial_state_is_unknown(self):
         """Test that initial state is UNKNOWN."""
         monitor = ConnectionHealthMonitor()
-        assert monitor.state == ConnectionState.UNKNOWN
+        assert await monitor.get_state() == ConnectionState.UNKNOWN
 
-    def test_initial_consecutive_failures_is_zero(self):
+    @pytest.mark.asyncio
+    async def test_initial_consecutive_failures_is_zero(self):
         """Test that initial consecutive failures count is 0."""
         monitor = ConnectionHealthMonitor()
-        assert monitor.consecutive_failures == 0
+        assert await monitor.get_consecutive_failures() == 0
 
-    def test_mark_healthy_sets_connected_state(self):
+    @pytest.mark.asyncio
+    async def test_mark_healthy_sets_connected_state(self):
         """Test that mark_healthy sets state to CONNECTED."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_healthy()
-        assert monitor.state == ConnectionState.CONNECTED
-        assert monitor.is_healthy is True
+        await monitor.mark_healthy()
+        assert await monitor.get_state() == ConnectionState.CONNECTED
+        assert await monitor.is_healthy() is True
 
-    def test_mark_healthy_resets_failure_count(self):
+    @pytest.mark.asyncio
+    async def test_mark_healthy_resets_failure_count(self):
         """Test that mark_healthy resets consecutive failures."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_unhealthy()
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 2
+        await monitor.mark_unhealthy()
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 2
         
-        monitor.mark_healthy()
-        assert monitor.consecutive_failures == 0
+        await monitor.mark_healthy()
+        assert await monitor.get_consecutive_failures() == 0
 
-    def test_mark_unhealthy_sets_disconnected_state(self):
+    @pytest.mark.asyncio
+    async def test_mark_unhealthy_sets_disconnected_state(self):
         """Test that mark_unhealthy sets state to DISCONNECTED."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_unhealthy()
-        assert monitor.state == ConnectionState.DISCONNECTED
-        assert monitor.is_healthy is False
+        await monitor.mark_unhealthy()
+        assert await monitor.get_state() == ConnectionState.DISCONNECTED
+        assert await monitor.is_healthy() is False
 
-    def test_mark_unhealthy_increments_failure_count(self):
+    @pytest.mark.asyncio
+    async def test_mark_unhealthy_increments_failure_count(self):
         """Test that mark_unhealthy increments consecutive failures."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 1
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 2
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 3
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 1
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 2
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 3
 
     @pytest.mark.asyncio
     async def test_check_connection_success(self):
@@ -309,8 +315,8 @@ class TestConnectionHealthMonitor:
             result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is True
-            assert monitor.state == ConnectionState.CONNECTED
-            assert monitor.is_healthy is True
+            assert await monitor.get_state() == ConnectionState.CONNECTED
+            assert await monitor.is_healthy() is True
 
     @pytest.mark.asyncio
     async def test_check_connection_failure(self):
@@ -321,8 +327,8 @@ class TestConnectionHealthMonitor:
             result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is False
-            assert monitor.state == ConnectionState.DISCONNECTED
-            assert monitor.is_healthy is False
+            assert await monitor.get_state() == ConnectionState.DISCONNECTED
+            assert await monitor.is_healthy() is False
 
     @pytest.mark.asyncio
     async def test_check_connection_detects_connection_lost(self):

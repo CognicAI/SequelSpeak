@@ -6,11 +6,10 @@ errors correctly without crashing the application.
 """
 
 import logging
-import threading
 import asyncio
 from enum import Enum
 from functools import wraps
-from typing import Callable, Optional, Any, TypeVar, cast
+from typing import Callable, TypeVar
 
 import psycopg
 
@@ -189,7 +188,7 @@ class ConnectionHealthMonitor:
     """
     Monitors and tracks the health state of a database connection.
     
-    This class is thread-safe and safe for concurrent FastAPI workers/threads.
+    This class is async-safe and designed for concurrent async operations.
     It provides methods to check connection health and track state changes 
     for use by health check endpoints or reconnection logic.
     
@@ -203,36 +202,33 @@ class ConnectionHealthMonitor:
         """Initialize the health monitor with unknown state."""
         self._state: ConnectionState = ConnectionState.UNKNOWN
         self._consecutive_failures: int = 0
-        self._lock = threading.RLock()
+        self._lock = asyncio.Lock()
     
-    @property
-    def state(self) -> ConnectionState:
+    async def get_state(self) -> ConnectionState:
         """Get the current connection state."""
-        with self._lock:
+        async with self._lock:
             return self._state
     
-    @property
-    def is_healthy(self) -> bool:
+    async def is_healthy(self) -> bool:
         """Check if the connection is currently healthy."""
-        with self._lock:
+        async with self._lock:
             return self._state == ConnectionState.CONNECTED
     
-    @property
-    def consecutive_failures(self) -> int:
+    async def get_consecutive_failures(self) -> int:
         """Get the number of consecutive connection failures."""
-        with self._lock:
+        async with self._lock:
             return self._consecutive_failures
     
-    def mark_healthy(self) -> None:
+    async def mark_healthy(self) -> None:
         """Mark the connection as healthy and reset failure count."""
-        with self._lock:
+        async with self._lock:
             self._state = ConnectionState.CONNECTED
             self._consecutive_failures = 0
         logger.debug("Connection marked as healthy")
     
-    def mark_unhealthy(self) -> None:
+    async def mark_unhealthy(self) -> None:
         """Mark the connection as unhealthy and increment failure count."""
-        with self._lock:
+        async with self._lock:
             self._state = ConnectionState.DISCONNECTED
             self._consecutive_failures += 1
             failures = self._consecutive_failures
@@ -260,13 +256,13 @@ class ConnectionHealthMonitor:
                     await cur.execute("SELECT 1")
                     result = await cur.fetchone()
                     if result == (1,):
-                        self.mark_healthy()
+                        await self.mark_healthy()
                         return ConnectionResult(
                             success=True,
                             message="Connection is healthy"
                         )
                     else:
-                        self.mark_unhealthy()
+                        await self.mark_unhealthy()
                         return ConnectionResult(
                             success=False,
                             message="Connection check failed",
@@ -275,7 +271,7 @@ class ConnectionHealthMonitor:
         except psycopg.OperationalError as e:
             secure_error_msg = mask_connection_url(str(e))
             logger.error(f"Health check failed: {secure_error_msg}")
-            self.mark_unhealthy()
+            await self.mark_unhealthy()
             
             if is_connection_lost_error(e):
                 return ConnectionResult(
@@ -292,7 +288,7 @@ class ConnectionHealthMonitor:
         except Exception as e:
             secure_error_msg = mask_connection_url(str(e))
             logger.error(f"Health check error: {secure_error_msg}")
-            self.mark_unhealthy()
+            await self.mark_unhealthy()
             return ConnectionResult(
                 success=False,
                 message="Connection check failed unexpectedly",

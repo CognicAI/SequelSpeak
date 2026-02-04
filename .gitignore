@@ -102,3 +102,6 @@ Thumbs.db
 .DS_Store
 Thumbs.db
 temp/
+
+#Copilot
+.github/

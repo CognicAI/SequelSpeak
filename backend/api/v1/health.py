@@ -3,7 +3,6 @@
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import APIRouter
 
@@ -120,7 +119,6 @@ async def health_check() -> HealthCheckResponse:
         )
     
     # Perform health check with timing
-    import time
     start_time = time.perf_counter()
     
     try:

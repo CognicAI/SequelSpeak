@@ -70,7 +70,7 @@ class TestDBConnectionServiceRetry:
             assert result.message == "Connection successful!"
             assert mock_get_pool.call_count == 3
             assert mock_sleep.call_count == 2  # Two retries
-            assert health_monitor.state == ConnectionState.CONNECTED
+            assert await health_monitor.get_state() == ConnectionState.CONNECTED
 
     @pytest.mark.asyncio
     async def test_retry_limit_enforcement(self):
@@ -92,7 +92,7 @@ class TestDBConnectionServiceRetry:
             assert result.error_code == ErrorCode.CONNECTION_LOST
             assert mock_get_pool.call_count == 3  # 1 initial + 2 retries
             assert mock_sleep.call_count == 2
-            assert health_monitor.state == ConnectionState.DISCONNECTED
+            assert await health_monitor.get_state() == ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
     async def test_exponential_backoff_timing(self):
@@ -127,13 +127,13 @@ class TestDBConnectionServiceRetry:
             mock_get_pool.side_effect = fail_exception
             
             # Initial state
-            assert health_monitor.consecutive_failures == 0
+            assert await health_monitor.get_consecutive_failures() == 0
             
             await DBConnectionService.test_connection(db_url, max_retries=2)
             
             # After 3 failures (1 initial + 2 retries)
-            assert health_monitor.consecutive_failures == 3
-            assert health_monitor.state == ConnectionState.DISCONNECTED
+            assert await health_monitor.get_consecutive_failures() == 3
+            assert await health_monitor.get_state() == ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
     async def test_health_monitor_reset_on_success(self):
@@ -141,9 +141,9 @@ class TestDBConnectionServiceRetry:
         db_url = "postgres://user:pass@localhost:5432/db"
         
         # Set unhealthy state
-        health_monitor.mark_unhealthy()
-        health_monitor.mark_unhealthy()
-        assert health_monitor.consecutive_failures == 2
+        await health_monitor.mark_unhealthy()
+        await health_monitor.mark_unhealthy()
+        assert await health_monitor.get_consecutive_failures() == 2
         
         # Create successful connection
         mock_pool = AsyncMock(spec=AsyncConnectionPool)
@@ -161,8 +161,8 @@ class TestDBConnectionServiceRetry:
             result = await DBConnectionService.test_connection(db_url)
             
             assert result.success is True
-            assert health_monitor.consecutive_failures == 0
-            assert health_monitor.state == ConnectionState.CONNECTED
+            assert await health_monitor.get_consecutive_failures() == 0
+            assert await health_monitor.get_state() == ConnectionState.CONNECTED
 
     @pytest.mark.asyncio
     async def test_no_retry_on_auth_failure(self):

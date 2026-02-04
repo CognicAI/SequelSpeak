@@ -2,8 +2,8 @@ import logging
 import psycopg
 import re
 import asyncio
-from typing import Tuple, Optional
-from urllib.parse import urlparse, quote_plus, urlunparse
+from typing import Tuple
+from urllib.parse import urlparse
 from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
@@ -174,10 +174,10 @@ class DBConnectionService:
                         await cur.execute("SELECT 1")
                         result = await cur.fetchone()
                         if result == (1,):
-                            health_monitor.mark_healthy()
+                            await health_monitor.mark_healthy()
                             return ConnectionResult(success=True, message="Connection successful!")
                         else:
-                            health_monitor.mark_unhealthy()
+                            await health_monitor.mark_unhealthy()
                             return ConnectionResult(
                                 success=False,
                                 message="Connection verification query failed.",
@@ -192,7 +192,7 @@ class DBConnectionService:
                 # Check if this is a connection lost error that should trigger retry
                 if is_connection_lost_error(e) and retries < max_retries:
                     retries += 1
-                    health_monitor.mark_unhealthy()
+                    await health_monitor.mark_unhealthy()
                     logger.warning(
                         f"Connection lost. Retrying in {delay:.1f}s... "
                         f"(Attempt {retries}/{max_retries})"
@@ -202,7 +202,7 @@ class DBConnectionService:
                     continue  # Retry the connection
 
                 # If we're here, either it's not retryable or we've exhausted retries
-                health_monitor.mark_unhealthy()
+                await health_monitor.mark_unhealthy()
                 
                 # Check if this was a connection lost error (retries exhausted)
                 if is_connection_lost_error(e):
@@ -227,7 +227,7 @@ class DBConnectionService:
             except Exception as e:
                 secure_error_msg = mask_connection_url(str(e))
                 logger.error(f"Unexpected error during connection test: {secure_error_msg}")
-                health_monitor.mark_unhealthy()
+                await health_monitor.mark_unhealthy()
                 return ConnectionResult(
                     success=False,
                     message="An unexpected error occurred while testing the connection.",

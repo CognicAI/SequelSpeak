@@ -7,7 +7,6 @@ per unique database URL, ensuring efficient connection reuse across async reques
 
 import logging
 import asyncio
-from typing import Dict
 from psycopg_pool import AsyncConnectionPool
 from config import settings
 
