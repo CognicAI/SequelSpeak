@@ -96,29 +96,58 @@ class ConnectionPoolManager:
         # Use URL hash as key (don't store raw URLs in memory)
         pool_key = str(hash(connection_url))
         
+        # Fast path: check if pool exists without holding lock
         async with self._lock:
-            if pool_key not in self._pools:
-                logger.info(
-                    f"Creating async connection pool (min_size={min_size}, "
-                    f"max_size={max_size}, timeout={timeout}s)"
-                )
-                
-                # Create the pool with open=False, then open it explicitly
-                pool = AsyncConnectionPool(
-                    connection_url,
-                    min_size=min_size,
-                    max_size=max_size,
-                    timeout=timeout,
-                    open=False
-                )
-                
-                # Open the pool (this is an async operation)
-                await pool.open()
+            if pool_key in self._pools:
+                return self._pools[pool_key]
+        
+        # Slow path: create pool
+        logger.info(
+            f"Creating async connection pool (min_size={min_size}, "
+            f"max_size={max_size}, timeout={timeout}s)"
+        )
+        
+        pool = None
+        try:
+            # Create the pool with open=False
+            pool = AsyncConnectionPool(
+                connection_url,
+                min_size=min_size,
+                max_size=max_size,
+                timeout=timeout,
+                open=False
+            )
+            
+            # Open the pool (async I/O - done outside lock for better concurrency)
+            await pool.open()
+            
+            # Store the opened pool
+            async with self._lock:
+                # Double-check: another task might have created it while we were opening
+                if pool_key in self._pools:
+                    # Another task created the pool, close ours and return existing
+                    try:
+                        await pool.close()
+                    except Exception as close_err:
+                        logger.warning(f"Failed to close duplicate pool: {close_err}")
+                    return self._pools[pool_key]
                 
                 self._pools[pool_key] = pool
                 logger.info(f"Connection pool created and opened successfully (pool_key={pool_key[:8]}...)")
+                return pool
+                
+        except Exception as e:
+            # Critical: If pool.open() failed, ensure we close the pool to prevent resource leak
+            if pool is not None and not pool.closed:
+                try:
+                    await pool.close()
+                    logger.warning(f"Closed pool after failed open (pool_key={pool_key[:8]}...)")
+                except Exception as close_err:
+                    logger.error(f"Failed to close pool after open error: {close_err}")
             
-            return self._pools[pool_key]
+            # Re-raise the original exception
+            logger.error(f"Failed to create/open connection pool: {e}")
+            raise
     
     async def get_pool_stats(self, connection_url: str) -> Optional[PoolStats]:
         """
@@ -270,6 +299,11 @@ class ConnectionPoolManager:
             
             for pool_key, pool in list(self._pools.items()):
                 try:
+                    # Skip if already closed
+                    if pool.closed:
+                        logger.debug(f"Pool {pool_key[:8]}... already closed, skipping")
+                        continue
+                    
                     # Add timeout to prevent hanging during shutdown
                     await asyncio.wait_for(pool.close(), timeout=5.0)
                     logger.info(f"Connection pool closed (pool_key={pool_key[:8]}...)")
