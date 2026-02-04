@@ -1,6 +1,8 @@
 import pytest
 import os
 import sys
+from pathlib import Path
+from unittest.mock import patch
 
 # Add backend to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -10,12 +12,16 @@ from config import Settings
 
 def test_config_defaults():
     """Test that default values are set correctly."""
-    # Ensure no env vars interfere
+    # Ensure no env vars interfere and prevent loading .env file
     with pytest.MonkeyPatch.context() as m:
         m.delenv("SECRET_KEY", raising=False)
         m.delenv("ENVIRONMENT", raising=False)
+        m.delenv("APP_NAME", raising=False)
+        m.delenv("ALLOWED_ORIGINS", raising=False)
+        m.delenv("HEALTH_CHECK_DB_URL", raising=False)
         
-        settings = Settings()
+        # Use _env_file=None to prevent loading the default .env file
+        settings = Settings(_env_file=None)
         assert settings.app_name == "SequelSpeak Backend"
         assert settings.environment == "development"
         assert settings.db_connection_timeout == 10
@@ -35,9 +41,13 @@ def test_production_secret_key_required():
     with pytest.MonkeyPatch.context() as m:
         m.setenv("ENVIRONMENT", "production")
         m.delenv("SECRET_KEY", raising=False)
+        m.delenv("APP_NAME", raising=False)
+        m.delenv("ALLOWED_ORIGINS", raising=False)
+        m.delenv("HEALTH_CHECK_DB_URL", raising=False)
         
+        # Use _env_file=None to prevent loading the default .env file
         with pytest.raises(ValidationError) as exc:
-            Settings()
+            Settings(_env_file=None)
         assert "secret_key is required in production" in str(exc.value)
 
 def test_production_secret_key_valid():
