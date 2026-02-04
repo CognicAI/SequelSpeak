@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Database Settings
     db_connection_timeout: int = 10  # Database connection timeout in seconds
     
+    # Connection Pool Settings
+    db_pool_min_size: int = 1  # Minimum number of connections in pool
+    db_pool_max_size: int = 5  # Maximum number of connections in pool
+    db_pool_timeout: int = 30  # Pool connection timeout in seconds
+    db_pool_max_idle: Optional[int] = None  # Maximum idle time for connections (seconds)
+    
     # Health Check Settings
     health_check_timeout: int = 2  # Health check timeout in seconds (keep low for fast response)
     health_check_db_url: Optional[str] = None  # Default database URL for health checks
@@ -86,6 +92,36 @@ class Settings(BaseSettings):
                 f"Consider reducing to avoid long hangs.",
                 file=sys.stderr
             )
+        return v
+    
+    @field_validator('db_pool_min_size')
+    @classmethod
+    def validate_pool_min_size(cls, v: int) -> int:
+        """Ensure pool min size is positive."""
+        if v < 0:
+            raise ValueError(f"db_pool_min_size must be non-negative, got: {v}")
+        return v
+    
+    @field_validator('db_pool_max_size')
+    @classmethod
+    def validate_pool_max_size(cls, v: int) -> int:
+        """Ensure pool max size is positive and reasonable."""
+        if v <= 0:
+            raise ValueError(f"db_pool_max_size must be positive, got: {v}")
+        if v > 50:
+            print(
+                f"WARNING: db_pool_max_size is very high ({v}). "
+                f"This may exhaust PostgreSQL max_connections. Consider reducing.",
+                file=sys.stderr
+            )
+        return v
+    
+    @field_validator('db_pool_timeout')
+    @classmethod
+    def validate_pool_timeout(cls, v: int) -> int:
+        """Ensure pool timeout is positive."""
+        if v <= 0:
+            raise ValueError(f"db_pool_timeout must be positive, got: {v}")
         return v
     
     @field_validator('health_check_timeout')

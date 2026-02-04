@@ -1,5 +1,6 @@
 psycopg==3.2.3
-psycopg-binary==3.2.3
+psycopg-binary==3.2.13
+psycopg-pool==3.2.3
 python-dotenv==1.2.1
 typing_extensions==4.15.0
 fastapi>=0.104.0,<1.0.0

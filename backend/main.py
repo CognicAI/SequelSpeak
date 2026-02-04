@@ -10,6 +10,7 @@ from logging_config import setup_logging
 import uuid
 from contextvars import ContextVar
 import time
+from services.connection_pool import pool_manager
 
 # Initialize logging before anything else
 setup_logging()
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"App Name: {settings.app_name}")
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"DB Timeout: {settings.db_connection_timeout}s")
+    logger.info(f"Pool Config: min={settings.db_pool_min_size}, max={settings.db_pool_max_size}, timeout={settings.db_pool_timeout}s")
     
     # Log CORS config (mask if production)
     origins = settings.get_allowed_origins_list()
@@ -46,12 +48,18 @@ async def lifespan(app: FastAPI):
     
     logger.info("=" * 60)
     logger.info("✓ Configuration validated successfully")
+    logger.info("✓ Connection pool manager initialized")
     logger.info("=" * 60)
     
     yield
     
-    # Shutdown logic (if any) goes here
-    pass
+    # Shutdown: Close all connection pools gracefully
+    logger.info("=" * 60)
+    logger.info("Shutting down SequelSpeak Backend")
+    logger.info("=" * 60)
+    await pool_manager.close_all()
+    logger.info("✓ Shutdown complete")
+    logger.info("=" * 60)
 
 app = FastAPI(
     title="SequelSpeak Backend API",

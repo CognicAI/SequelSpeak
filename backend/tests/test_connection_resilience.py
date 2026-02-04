@@ -27,6 +27,18 @@ from utils.connection_resilience import (
 from schemas.errors import ErrorCode, ConnectionResult
 
 
+@pytest.fixture(autouse=True)
+def reset_health_monitor():
+    """Reset health monitor state before each test to prevent state leakage."""
+    from utils.connection_resilience import health_monitor
+    health_monitor._state = ConnectionState.UNKNOWN
+    health_monitor._consecutive_failures = 0
+    yield
+    # Cleanup after test
+    health_monitor._state = ConnectionState.UNKNOWN
+    health_monitor._consecutive_failures = 0
+
+
 # ============================================================================
 # ERROR DETECTION TESTS
 # ============================================================================
@@ -273,40 +285,52 @@ class TestConnectionHealthMonitor:
         monitor.mark_unhealthy()
         assert monitor.consecutive_failures == 3
 
-    def test_check_connection_success(self):
+    @pytest.mark.asyncio
+    async def test_check_connection_success(self):
         """Test check_connection with successful connection."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
         monitor = ConnectionHealthMonitor()
         
-        with patch('psycopg.connect') as mock_connect:
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_connect.return_value.__enter__.return_value = mock_conn
-            mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-            mock_cursor.fetchone.return_value = (1,)
-
-            result = monitor.check_connection("postgres://user:pass@localhost:5432/db")
+        # Create async mocks for pool-based connection
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        mock_cursor.fetchone = AsyncMock(return_value=(1,))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is True
             assert monitor.state == ConnectionState.CONNECTED
             assert monitor.is_healthy is True
 
-    def test_check_connection_failure(self):
+    @pytest.mark.asyncio
+    async def test_check_connection_failure(self):
         """Test check_connection with connection failure."""
         monitor = ConnectionHealthMonitor()
         
-        with patch('psycopg.connect', side_effect=psycopg.OperationalError("connection refused")):
-            result = monitor.check_connection("postgres://user:pass@localhost:5432/db")
+        with patch('services.connection_pool.pool_manager.get_pool', side_effect=psycopg.OperationalError("connection refused")):
+            result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is False
             assert monitor.state == ConnectionState.DISCONNECTED
             assert monitor.is_healthy is False
 
-    def test_check_connection_detects_connection_lost(self):
+    @pytest.mark.asyncio
+    async def test_check_connection_detects_connection_lost(self):
         """Test that check_connection detects connection lost errors."""
         monitor = ConnectionHealthMonitor()
         
-        with patch('psycopg.connect', side_effect=psycopg.OperationalError("server closed the connection unexpectedly")):
-            result = monitor.check_connection("postgres://user:pass@localhost:5432/db")
+        with patch('services.connection_pool.pool_manager.get_pool', side_effect=psycopg.OperationalError("server closed the connection unexpectedly")):
+            result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is False
             assert result.error_code == ErrorCode.CONNECTION_LOST

@@ -1,7 +1,7 @@
 import logging
 import psycopg
 import re
-import time
+import asyncio
 from typing import Tuple, Optional
 from urllib.parse import urlparse, quote_plus, urlunparse
 from config import settings
@@ -9,6 +9,7 @@ from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
 from utils.input_validator import validate_connection_url
 from utils.connection_resilience import is_connection_lost_error, health_monitor
+from services.connection_pool import pool_manager
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -142,9 +143,9 @@ class DBConnectionService:
             )
 
     @staticmethod
-    def test_connection(url: str, max_retries: int = 2, initial_delay: float = 1.0) -> ConnectionResult:
+    async def test_connection(url: str, max_retries: int = 2, initial_delay: float = 1.0) -> ConnectionResult:
         """
-        Attempts to connect to the PostgreSQL database using the provided URL.
+        Attempts to connect to the PostgreSQL database using the provided URL with async pooling.
         Automatically retries on transient connection failures with exponential backoff.
         
         Args:
@@ -160,10 +161,18 @@ class DBConnectionService:
         
         while retries <= max_retries:
             try:
-                with psycopg.connect(url, connect_timeout=settings.db_connection_timeout) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT 1")
-                        result = cur.fetchone()
+                # Get pool inside retry loop to handle pool exhaustion scenarios
+                pool = await pool_manager.get_pool(
+                    url,
+                    min_size=settings.db_pool_min_size,
+                    max_size=settings.db_pool_max_size,
+                    timeout=settings.db_pool_timeout
+                )
+                
+                async with pool.connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT 1")
+                        result = await cur.fetchone()
                         if result == (1,):
                             health_monitor.mark_healthy()
                             return ConnectionResult(success=True, message="Connection successful!")
@@ -188,7 +197,7 @@ class DBConnectionService:
                         f"Connection lost. Retrying in {delay:.1f}s... "
                         f"(Attempt {retries}/{max_retries})"
                     )
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
                     delay *= 2.0  # Exponential backoff
                     continue  # Retry the connection
 

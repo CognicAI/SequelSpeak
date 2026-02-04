@@ -68,8 +68,8 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
             error_code=validation_result.error_code
         )
 
-    # 2. Connection Test
-    connection_result = DBConnectionService.test_connection(request.connection_url)
+    # 2. Connection Test (now async)
+    connection_result = await DBConnectionService.test_connection(request.connection_url)
     
     if connection_result.success:
         return ConnectionTestResponse(

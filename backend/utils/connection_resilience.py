@@ -7,7 +7,7 @@ errors correctly without crashing the application.
 
 import logging
 import threading
-import time
+import asyncio
 from enum import Enum
 from functools import wraps
 from typing import Callable, Optional, Any, TypeVar, cast
@@ -238,9 +238,9 @@ class ConnectionHealthMonitor:
             failures = self._consecutive_failures
         logger.warning(f"Connection marked as unhealthy (consecutive failures: {failures})")
     
-    def check_connection(self, url: str, timeout: int = 5) -> ConnectionResult:
+    async def check_connection(self, url: str, timeout: int = 5) -> ConnectionResult:
         """
-        Perform a lightweight connection check.
+        Perform a lightweight async connection check using connection pool.
         
         Args:
             url: Database connection URL
@@ -249,11 +249,16 @@ class ConnectionHealthMonitor:
         Returns:
             ConnectionResult indicating success or failure
         """
+        # Import here to avoid circular dependency
+        from services.connection_pool import pool_manager
+        
         try:
-            with psycopg.connect(url, connect_timeout=timeout) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    result = cur.fetchone()
+            pool = await pool_manager.get_pool(url, min_size=1, max_size=1, timeout=timeout)
+            
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT 1")
+                    result = await cur.fetchone()
                     if result == (1,):
                         self.mark_healthy()
                         return ConnectionResult(

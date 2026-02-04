@@ -1,6 +1,7 @@
 import sys
 import os
 import logging
+import pytest
 from io import StringIO
 from unittest.mock import patch
 import psycopg
@@ -10,7 +11,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.db_connection_service import DBConnectionService
 
-def test_service_sanitizes_error_logs():
+@pytest.mark.asyncio
+async def test_service_sanitizes_error_logs():
     """
     Verify that DBConnectionService sanitizes credentials in error logs
     when the underlying driver raises an exception containing the URL.
@@ -24,12 +26,12 @@ def test_service_sanitizes_error_logs():
     
     url = "postgres://user:supersecret@1.2.3.4:5432/db"
     
-    # Mock psycopg.connect to raise an OperationalError containing the URL
+    # Mock pool_manager.get_pool to raise an OperationalError containing the URL
     # This simulates a scenario where the driver returns the connection string in the error.
     error_msg = f"FATAL: password authentication failed for {url}"
     
-    with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
-        result = DBConnectionService.test_connection(url)
+    with patch('services.db_connection_service.pool_manager.get_pool', side_effect=psycopg.OperationalError(error_msg)):
+        result = await DBConnectionService.test_connection(url)
         
         assert result.success is False
         
