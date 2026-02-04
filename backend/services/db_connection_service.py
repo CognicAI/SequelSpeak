@@ -2,6 +2,7 @@ import logging
 import psycopg
 import re
 import time
+from typing import Tuple, Optional
 from urllib.parse import urlparse, quote_plus, urlunparse
 from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
@@ -11,6 +12,90 @@ from utils.connection_resilience import is_connection_lost_error, health_monitor
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+
+class ErrorClassifier:
+    """
+    Classifies database connection errors into specific error types.
+    Uses a data-driven approach to eliminate code duplication.
+    """
+    
+    # Error patterns mapped to (ErrorCode, user_message_template)
+    ERROR_PATTERNS = [
+        # Authentication errors
+        (
+            ["password authentication failed", "authentication failed", 
+             "no pg_hba.conf entry", "permission denied"],
+            ErrorCode.AUTH_FAILED,
+            "Connection failed: Authentication error. "
+            "Please verify your username, password, and access permissions."
+        ),
+        # Database not found
+        (
+            ["does not exist.*database", "database.*does not exist"],
+            ErrorCode.DATABASE_NOT_FOUND,
+            "Connection failed: The specified database could not be found. "
+            "Please verify the database name and that it exists on the server."
+        ),
+        # SSL/TLS errors
+        (
+            ["ssl error", "ssl connection", "ssl handshake", "certificate verify",
+             "certificate validation", "certificate_verify_failed", "tlsv1",
+             "ssl_error", "certificate expired", "certificate invalid", 
+             "self-signed certificate"],
+            ErrorCode.SSL_ERROR,
+            "Connection failed: SSL/TLS certificate error. "
+            "Please verify your SSL configuration and certificate validity."
+        ),
+        # Timeout errors
+        (
+            ["timeout expired", "timed out", "connection timeout"],
+            ErrorCode.TIMEOUT,
+            "Connection failed: Connection attempt timed out after {timeout} seconds. "
+            "Please verify the host, port, and network connectivity, or try increasing the timeout."
+        ),
+        # Network/Host errors
+        (
+            ["ssl syscall", "could not connect to server", "connection refused",
+             "could not translate host name", "network is unreachable"],
+            ErrorCode.HOST_UNREACHABLE,
+            "Connection failed: Unable to reach the database server. "
+            "Please verify the host, port, and network connectivity."
+        ),
+    ]
+    
+    @classmethod
+    def classify_error(cls, error_details: str, timeout: int) -> Tuple[ErrorCode, str]:
+        """
+        Classifies a database error based on error message patterns.
+        
+        Args:
+            error_details: The error message from the database driver
+            timeout: The connection timeout value for message templating
+            
+        Returns:
+            Tuple of (ErrorCode, user_friendly_message)
+        """
+        details_lower = error_details.lower()
+        
+        for patterns, error_code, message_template in cls.ERROR_PATTERNS:
+            for pattern in patterns:
+                # Support regex patterns or simple string matching
+                if ".*" in pattern:
+                    if re.search(pattern, details_lower):
+                        message = message_template.format(timeout=timeout)
+                        return error_code, message
+                else:
+                    if pattern in details_lower:
+                        message = message_template.format(timeout=timeout)
+                        return error_code, message
+        
+        # Fallback generic error
+        return (
+            ErrorCode.CONNECTION_ERROR,
+            "Connection failed: Unable to connect to the database. "
+            "Please verify your host, port, database name, and credentials."
+        )
 
 class DBConnectionService:
     @staticmethod
@@ -109,7 +194,6 @@ class DBConnectionService:
 
                 # If we're here, either it's not retryable or we've exhausted retries
                 health_monitor.mark_unhealthy()
-                details_lower = error_details.lower()
                 
                 # Check if this was a connection lost error (retries exhausted)
                 if is_connection_lost_error(e):
@@ -119,99 +203,17 @@ class DBConnectionService:
                         error_code=ErrorCode.CONNECTION_LOST
                     )
 
-                # Authentication / authorization issues
-                if (
-                    "password authentication failed" in details_lower
-                    or "authentication failed" in details_lower
-                    or "no pg_hba.conf entry" in details_lower
-                    or "permission denied" in details_lower
-                ):
-                    return ConnectionResult(
-                        success=False,
-                        message=(
-                            "Connection failed: Authentication error. "
-                            "Please verify your username, password, and access permissions."
-                        ),
-                        error_code=ErrorCode.AUTH_FAILED
-                    )
-
-                # Database name / database not found issues
-                elif "does not exist" in details_lower and "database" in details_lower:
-                    return ConnectionResult(
-                        success=False,
-                        message=(
-                            "Connection failed: The specified database could not be found. "
-                            "Please verify the database name and that it exists on the server."
-                        ),
-                        error_code=ErrorCode.DATABASE_NOT_FOUND
-                    )
-
-                # SSL/TLS certificate issues
-                elif (
-                    "ssl error" in details_lower
-                    or "ssl connection" in details_lower
-                    or "ssl handshake" in details_lower
-                    or "certificate verify" in details_lower
-                    or "certificate validation" in details_lower
-                    or "certificate_verify_failed" in details_lower
-                    or "tlsv1" in details_lower
-                    or "ssl_error" in details_lower
-                    or "certificate expired" in details_lower
-                    or "certificate invalid" in details_lower
-                    or "self-signed certificate" in details_lower
-                ):
-                    return ConnectionResult(
-                        success=False,
-                        message=(
-                            "Connection failed: SSL/TLS certificate error. "
-                            "Please verify your SSL configuration and certificate validity."
-                        ),
-                        error_code=ErrorCode.SSL_ERROR
-                    )
-
-                # Timeout issues (check before general network errors)
-                elif (
-                    "timeout expired" in details_lower
-                    or "timed out" in details_lower
-                    or "connection timeout" in details_lower
-                ):
-                    return ConnectionResult(
-                        success=False,
-                        message=(
-                            f"Connection failed: Connection attempt timed out after {settings.db_connection_timeout} seconds. "
-                            "Please verify the host, port, and network connectivity, or try increasing the timeout."
-                        ),
-                        error_code=ErrorCode.TIMEOUT
-                    )
-
-                # Network / connectivity / host/port issues
-                # Note: "SSL SYSCALL" errors are network errors during SSL handshake, not config issues
-                elif (
-                    "ssl syscall" in details_lower
-                    or "could not connect to server" in details_lower
-                    or "connection refused" in details_lower
-                    or "could not translate host name" in details_lower
-                    or "network is unreachable" in details_lower
-                ):
-                    return ConnectionResult(
-                        success=False,
-                        message=(
-                            "Connection failed: Unable to reach the database server. "
-                            "Please verify the host, port, and network connectivity."
-                        ),
-                        error_code=ErrorCode.HOST_UNREACHABLE
-                    )
-
-                # Fallback generic message
-                else:
-                    return ConnectionResult(
-                        success=False,
-                        message=(
-                            "Connection failed: Unable to connect to the database. "
-                            "Please verify your host, port, database name, and credentials."
-                        ),
-                        error_code=ErrorCode.CONNECTION_ERROR
-                    )
+                # Classify the error using the ErrorClassifier
+                error_code, error_message = ErrorClassifier.classify_error(
+                    error_details, 
+                    settings.db_connection_timeout
+                )
+                
+                return ConnectionResult(
+                    success=False,
+                    message=error_message,
+                    error_code=error_code
+                )
 
             except Exception as e:
                 secure_error_msg = mask_connection_url(str(e))

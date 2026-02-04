@@ -8,3 +8,6 @@ coverage.xml
 *.pyc
 *.pyo
 
+# Log files
+logs/
+*.log

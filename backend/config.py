@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     @classmethod
     def validate_secret_key(cls, v: Optional[str], info) -> Optional[str]:
         """Ensure secret_key is set in production."""
+        # Convert empty string to None for consistency
+        if v == '':
+            v = None
+        
         # Access environment from ValidationInfo context
         environment = info.data.get('environment', 'development')
         
