@@ -24,7 +24,7 @@ trap cleanup SIGINT SIGTERM
 # Check backend venv exists
 if [ ! -d "backend/venv" ]; then
     echo -e "${RED}Error: backend/venv not found.${NC}"
-    echo -e "${YELLOW}Run: cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt${NC}"
+    echo -e "${YELLOW}Run: cd backend && python3.12 -m venv venv && source venv/bin/activate && pip install -r requirements.txt${NC}"
     exit 1
 fi
 
