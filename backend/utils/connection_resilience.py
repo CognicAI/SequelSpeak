@@ -238,7 +238,7 @@ class ConnectionHealthMonitor:
             failures = self._consecutive_failures
         logger.warning(f"Connection marked as unhealthy (consecutive failures: {failures})")
     
-    async def check_connection(self, url: str, timeout: int = 5, max_retries: int = 1) -> ConnectionResult:
+    async def check_connection(self, url: str, timeout: int = 5, max_retries: int = None) -> ConnectionResult:
         """
         Perform a lightweight async connection check using connection pool.
         
@@ -248,7 +248,8 @@ class ConnectionHealthMonitor:
         Args:
             url: Database connection URL
             timeout: Connection timeout in seconds (default: 5)
-            max_retries: Maximum retry attempts for transient failures (default: 1)
+            max_retries: Maximum retry attempts for transient failures
+                        (default: from settings.health_check_retry_max)
             
         Returns:
             ConnectionResult indicating success or failure
@@ -259,6 +260,11 @@ class ConnectionHealthMonitor:
         """
         # Import here to avoid circular dependency
         from services.connection_pool import pool_manager
+        from config import settings
+        
+        # Use configured default if not specified
+        if max_retries is None:
+            max_retries = settings.health_check_retry_max
         
         retries = 0
         

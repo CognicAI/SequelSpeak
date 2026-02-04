@@ -143,19 +143,103 @@ class DBConnectionService:
             )
 
     @staticmethod
-    async def test_connection(url: str, max_retries: int = 2, initial_delay: float = 1.0) -> ConnectionResult:
+    async def test_connection_oneshot(url: str) -> ConnectionResult:
+        """
+        Test database connection using a one-shot connection (no pooling).
+        
+        This method creates a direct connection that is immediately closed after testing,
+        ensuring credentials are not cached in memory. Suitable for user-initiated
+        connection tests where each request may use different credentials.
+        
+        Args:
+            url: Database connection URL with embedded credentials
+            
+        Returns:
+            ConnectionResult indicating success or failure
+            
+        Note:
+            Unlike test_connection(), this method does not use connection pooling
+            and does not retry on transient failures. It's designed for interactive
+            testing where immediate feedback is more important than resilience.
+        """
+        try:
+            # Create one-shot connection with timeout
+            async with await psycopg.AsyncConnection.connect(
+                url,
+                connect_timeout=settings.db_connection_timeout
+            ) as conn:
+                # Test the connection with a simple query
+                async with conn.cursor() as cur:
+                    await cur.execute("SELECT 1")
+                    result = await cur.fetchone()
+                    
+                    if result == (1,):
+                        logger.info("One-shot connection test successful")
+                        return ConnectionResult(
+                            success=True,
+                            message="Connection successful!"
+                        )
+                    else:
+                        logger.warning("Connection test query returned unexpected result")
+                        return ConnectionResult(
+                            success=False,
+                            message="Connection verification query failed.",
+                            error_code=ErrorCode.CONNECTION_ERROR
+                        )
+            # Connection automatically closed when exiting context manager
+            
+        except psycopg.OperationalError as e:
+            error_details = str(e).strip()
+            secure_error_details = mask_connection_url(error_details)
+            logger.error(f"One-shot connection test failed: {secure_error_details}")
+            
+            # Classify the error using the ErrorClassifier
+            error_code, error_message = ErrorClassifier.classify_error(
+                error_details,
+                settings.db_connection_timeout
+            )
+            
+            return ConnectionResult(
+                success=False,
+                message=error_message,
+                error_code=error_code
+            )
+            
+        except Exception as e:
+            secure_error_msg = mask_connection_url(str(e))
+            logger.error(f"Unexpected error during one-shot connection test: {secure_error_msg}")
+            return ConnectionResult(
+                success=False,
+                message="An unexpected error occurred while testing the connection.",
+                error_code=ErrorCode.CONNECTION_ERROR
+            )
+
+    @staticmethod
+    async def test_connection(url: str, max_retries: int = None, initial_delay: float = None) -> ConnectionResult:
         """
         Attempts to connect to the PostgreSQL database using the provided URL with async pooling.
         Automatically retries on transient connection failures with exponential backoff.
         
+        DEPRECATED: This method uses connection pooling which caches credentials in memory.
+        For user-initiated connection tests, use test_connection_oneshot() instead.
+        This method is retained for internal use by health checks and persistent connections.
+        
         Args:
             url: Database connection URL
-            max_retries: Maximum number of retry attempts (default 2)
-            initial_delay: Initial delay before first retry in seconds (default 1.0)
+            max_retries: Maximum number of retry attempts
+                        (default: from settings.connection_retry_max)
+            initial_delay: Initial delay before first retry in seconds
+                          (default: from settings.connection_retry_initial_delay)
         
         Returns:
             ConnectionResult indicating success or failure
         """
+        # Use configured defaults if not specified
+        if max_retries is None:
+            max_retries = settings.connection_retry_max
+        if initial_delay is None:
+            initial_delay = settings.connection_retry_initial_delay
+        
         retries = 0
         delay = initial_delay
         
