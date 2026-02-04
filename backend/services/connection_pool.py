@@ -108,10 +108,13 @@ class ConnectionPoolManager:
             
             logger.info(f"Closing {len(self._pools)} connection pool(s)...")
             
-            for pool_key, pool in self._pools.items():
+            for pool_key, pool in list(self._pools.items()):
                 try:
-                    await pool.close()
+                    # Add timeout to prevent hanging during shutdown
+                    await asyncio.wait_for(pool.close(), timeout=5.0)
                     logger.info(f"Connection pool closed (pool_key={pool_key[:8]}...)")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout closing pool {pool_key[:8]}..., forcing close")
                 except Exception as e:
                     logger.error(f"Error closing pool {pool_key[:8]}...: {e}")
             
