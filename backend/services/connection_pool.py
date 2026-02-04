@@ -7,10 +7,37 @@ per unique database URL, ensuring efficient connection reuse across async reques
 
 import logging
 import asyncio
+from dataclasses import dataclass
+from typing import Optional, Dict, List
 from psycopg_pool import AsyncConnectionPool
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PoolStats:
+    """
+    Statistics for a connection pool.
+    
+    Attributes:
+        pool_key: Hashed pool identifier (for security, not the raw URL)
+        size: Current total size of the pool (all connections)
+        available: Number of connections available for use
+        min_size: Configured minimum pool size
+        max_size: Configured maximum pool size
+        timeout: Configured connection timeout in seconds
+        is_open: Whether the pool is currently open
+        is_full: Whether the pool has reached maximum capacity
+    """
+    pool_key: str
+    size: int
+    available: int
+    min_size: int
+    max_size: int
+    timeout: int
+    is_open: bool
+    is_full: bool
 
 
 class ConnectionPoolManager:
@@ -92,6 +119,140 @@ class ConnectionPoolManager:
                 logger.info(f"Connection pool created and opened successfully (pool_key={pool_key[:8]}...)")
             
             return self._pools[pool_key]
+    
+    async def get_pool_stats(self, connection_url: str) -> Optional[PoolStats]:
+        """
+        Get statistics for a specific connection pool.
+        
+        Args:
+            connection_url: Database connection URL
+            
+        Returns:
+            PoolStats object with pool metrics, or None if pool doesn't exist
+        """
+        pool_key = str(hash(connection_url))
+        
+        async with self._lock:
+            if pool_key not in self._pools:
+                return None
+            
+            pool = self._pools[pool_key]
+            
+            # Get pool statistics from psycopg_pool
+            # Note: AsyncConnectionPool doesn't expose detailed stats directly,
+            # so we use the properties available
+            try:
+                # Pool size properties
+                pool_size = pool._pool.size if hasattr(pool, '_pool') else 0
+                pool_available = pool._pool.available if hasattr(pool, '_pool') else 0
+                
+                return PoolStats(
+                    pool_key=pool_key[:8] + "...",  # Truncated for security
+                    size=pool_size,
+                    available=pool_available,
+                    min_size=pool.min_size,
+                    max_size=pool.max_size,
+                    timeout=pool.timeout,
+                    is_open=not pool.closed,
+                    is_full=(pool_size >= pool.max_size)
+                )
+            except AttributeError:
+                # Fallback if internal structure changes
+                logger.warning(f"Could not access pool statistics for {pool_key[:8]}...")
+                return PoolStats(
+                    pool_key=pool_key[:8] + "...",
+                    size=0,
+                    available=0,
+                    min_size=pool.min_size,
+                    max_size=pool.max_size,
+                    timeout=pool.timeout,
+                    is_open=not pool.closed,
+                    is_full=False
+                )
+    
+    async def get_all_pools_stats(self) -> List[PoolStats]:
+        """
+        Get statistics for all connection pools.
+        
+        Returns:
+            List of PoolStats objects for all active pools
+        """
+        async with self._lock:
+            stats_list = []
+            
+            for pool_key, pool in self._pools.items():
+                try:
+                    pool_size = pool._pool.size if hasattr(pool, '_pool') else 0
+                    pool_available = pool._pool.available if hasattr(pool, '_pool') else 0
+                    
+                    stats = PoolStats(
+                        pool_key=pool_key[:8] + "...",
+                        size=pool_size,
+                        available=pool_available,
+                        min_size=pool.min_size,
+                        max_size=pool.max_size,
+                        timeout=pool.timeout,
+                        is_open=not pool.closed,
+                        is_full=(pool_size >= pool.max_size)
+                    )
+                    stats_list.append(stats)
+                except AttributeError:
+                    logger.warning(f"Could not access pool statistics for {pool_key[:8]}...")
+            
+            return stats_list
+    
+    async def get_active_connection_count(self, connection_url: str) -> int:
+        """
+        Get the number of active (in-use) connections for a specific URL.
+        
+        Args:
+            connection_url: Database connection URL
+            
+        Returns:
+            Number of active connections (size - available)
+        """
+        stats = await self.get_pool_stats(connection_url)
+        if stats is None:
+            return 0
+        
+        # Active connections = total connections - available connections
+        return stats.size - stats.available
+    
+    async def get_total_active_connections(self) -> int:
+        """
+        Get the total number of active connections across all pools.
+        
+        Returns:
+            Total number of active connections
+        """
+        all_stats = await self.get_all_pools_stats()
+        return sum(stats.size - stats.available for stats in all_stats)
+    
+    async def is_pool_at_capacity(self, connection_url: str) -> bool:
+        """
+        Check if a connection pool is at maximum capacity.
+        
+        Args:
+            connection_url: Database connection URL
+            
+        Returns:
+            True if pool is at max capacity, False otherwise
+        """
+        stats = await self.get_pool_stats(connection_url)
+        if stats is None:
+            return False
+        
+        return stats.is_full
+    
+    async def get_pool_count(self) -> int:
+        """
+        Get the total number of connection pools.
+        
+        Returns:
+            Number of active connection pools
+        """
+        async with self._lock:
+            return len(self._pools)
     
     async def close_all(self):
         """
