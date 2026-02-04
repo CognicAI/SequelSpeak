@@ -105,3 +105,6 @@ temp/
 
 #Copilot
 .github/
+
+#Scripts
+*scripts
