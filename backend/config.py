@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator, ValidationError
 from pathlib import Path
@@ -25,11 +26,11 @@ class Settings(BaseSettings):
     
     # Application Settings
     app_name: str = "SequelSpeak Backend"
-    environment: str = "development"
+    environment: str 
     
     # Security Settings
     secret_key: Optional[str] = None  # Required in production for session/JWT
-    allowed_origins: str = "*"  # Comma-separated CORS origins
+    allowed_origins: str  # Comma-separated CORS origins
     
     # Database Settings
     db_connection_timeout: int = 10  # Database connection timeout in seconds
@@ -58,6 +59,12 @@ class Settings(BaseSettings):
     circuit_breaker_enabled: bool = True  # Enable circuit breaker for database connections
     circuit_breaker_failure_threshold: int = 5  # Number of consecutive failures before opening circuit
     circuit_breaker_timeout: int = 60  # Seconds to wait before trying again after circuit opens
+
+    model_config = ConfigDict(
+        env_file=".env" if os.getenv("ENVIRONMENT") != "production" else None,
+        env_file_encoding='utf-8',
+        extra='forbid'
+    )
     
     @field_validator('environment')
     @classmethod
@@ -66,6 +73,29 @@ class Settings(BaseSettings):
         allowed = ['development', 'staging', 'production']
         if v not in allowed:
             raise ValueError(f"environment must be one of {allowed}, got: {v}")
+        return v
+    
+    @field_validator('allowed_origins')
+    @classmethod
+    def validate_cors_origins(cls, v: str, info) -> str:
+        """Validate CORS configuration based on environment."""
+        environment = info.data.get('environment', 'development')
+        
+        if environment == "production" and v == "*":
+            raise ValueError(
+                "Wildcard CORS origins (*) are not allowed in production. "
+                "Please specify explicit origins."
+            )
+        
+        # Validate individual origins if not wildcard
+        if v != "*":
+            origins = [o.strip() for o in v.split(',') if o.strip()]
+            for origin in origins:
+                if not origin.startswith(('http://', 'https://')):
+                    raise ValueError(
+                        f"Invalid origin '{origin}'. Must start with http:// or https://"
+                    )
+        
         return v
     
     @field_validator('secret_key')
