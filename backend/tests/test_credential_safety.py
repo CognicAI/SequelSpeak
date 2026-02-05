@@ -19,7 +19,7 @@ import os
 import logging
 import json
 from io import StringIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 import psycopg
 from fastapi.testclient import TestClient
@@ -34,6 +34,13 @@ from utils.input_validator import (
     sanitize_for_logging,
 )
 from main import app
+
+@pytest.fixture
+def db_service():
+    """Create a DBConnectionService instance with default dependencies."""
+    return DBConnectionService()
+
+
 
 # Create test client
 client = TestClient(app)
@@ -59,13 +66,18 @@ class TestLogCredentialSafety:
         """Clean up log handler after each test."""
         self.logger.removeHandler(self.handler)
     
-    def test_password_masked_in_operational_error_logs(self):
+    @pytest.mark.asyncio
+    async def test_password_masked_in_operational_error_logs(self, db_service):
         """Verify password is masked when OperationalError contains connection URL."""
         url = "postgres://admin:SuperSecretP@ssw0rd!@db.example.com:5432/production"
         error_msg = f"could not connect to server: {url}"
         
-        with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
-            result = DBConnectionService.test_connection(url)
+        async def raise_error(*args, **kwargs):
+            raise psycopg.OperationalError(error_msg)
+        
+        with patch('services.db_connection_service.pool_manager.get_pool',
+                   new=AsyncMock(side_effect=raise_error)):
+            result = await db_service.test_connection(url)
             
             logs = self.log_stream.getvalue()
             
@@ -74,14 +86,19 @@ class TestLogCredentialSafety:
             # Masked version must appear
             assert "admin:******@" in logs, "Password not masked in logs!"
     
-    def test_password_masked_with_special_characters(self):
+    @pytest.mark.asyncio
+    async def test_password_masked_with_special_characters(self, db_service):
         """Verify passwords with special characters are properly masked."""
         # Password: p@ss#word!123 (URL encoded: p%40ss%23word%21123)
         url = "postgres://user:p%40ss%23word%21123@localhost:5432/db"
         error_msg = f"authentication failed for {url}"
         
-        with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
-            DBConnectionService.test_connection(url)
+        async def raise_error(*args, **kwargs):
+            raise psycopg.OperationalError(error_msg)
+        
+        with patch('services.db_connection_service.pool_manager.get_pool',
+                   new=AsyncMock(side_effect=raise_error)):
+            await db_service.test_connection(url)
             
             logs = self.log_stream.getvalue()
             
@@ -90,37 +107,47 @@ class TestLogCredentialSafety:
             # Masked version must appear
             assert "user:******@" in logs
     
-    def test_password_masked_in_auth_failure(self):
+    @pytest.mark.asyncio
+    async def test_password_masked_in_auth_failure(self, db_service):
         """Verify password masked in authentication failure scenarios."""
         url = "postgres://dbuser:MyPassword123@host.example.com/mydb"
         error_msg = "password authentication failed for user dbuser"
         
-        with patch('psycopg.connect', side_effect=psycopg.OperationalError(error_msg)):
-            DBConnectionService.test_connection(url)
+        async def raise_error(*args, **kwargs):
+            raise psycopg.OperationalError(error_msg)
+        
+        with patch('services.db_connection_service.pool_manager.get_pool',
+                   new=AsyncMock(side_effect=raise_error)):
+            await db_service.test_connection(url)
             
             logs = self.log_stream.getvalue()
             
             assert "MyPassword123" not in logs
     
-    def test_password_masked_in_unexpected_errors(self):
+    @pytest.mark.asyncio
+    async def test_password_masked_in_unexpected_errors(self, db_service):
         """Verify password masked even in unexpected exception types."""
         url = "postgres://user:secret123@host/db"
         error_msg = f"Unexpected error with URL: {url}"
         
-        with patch('psycopg.connect', side_effect=Exception(error_msg)):
-            DBConnectionService.test_connection(url)
+        async def raise_error(*args, **kwargs):
+            raise Exception(error_msg)
+        
+        with patch('services.db_connection_service.pool_manager.get_pool',
+                   new=AsyncMock(side_effect=raise_error)):
+            await db_service.test_connection(url)
             
             logs = self.log_stream.getvalue()
             
             # Password should be masked in unexpected errors too
             assert "secret123" not in logs, "Password leaked in unexpected error log!"
     
-    def test_security_validation_logs_no_credentials(self):
+    def test_security_validation_logs_no_credentials(self, db_service):
         """Verify security validation failures don't log credentials."""
         # URL with SQL injection pattern
         url = "postgres://user:secret@host/db--comment"
         
-        result = DBConnectionService.parse_and_verify_url(url)
+        result = db_service.parse_and_verify_url(url)
         
         logs = self.log_stream.getvalue()
         
@@ -203,7 +230,7 @@ class TestErrorResponseSafety:
             assert "sql" not in data["detail"].lower()
             assert "injection" not in data["detail"].lower()
     @pytest.mark.asyncio
-    async def test_exception_handler_sanitizes_response(self):
+    async def test_exception_handler_sanitizes_response(self, db_service):
         """Verify the exception handler produces safe responses."""
         from main import database_connection_error_handler
         from exceptions import DatabaseConnectionError

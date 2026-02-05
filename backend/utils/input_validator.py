@@ -15,6 +15,7 @@ Security checks include:
 import re
 from dataclasses import dataclass
 from typing import Optional
+from utils.patterns import PatternMatcher, PatternCategory
 
 
 # Maximum allowed URL length (prevents buffer-style attacks)
@@ -81,29 +82,8 @@ def contains_sql_injection_patterns(value: str) -> bool:
     if re.search(r'--($|[^\w-])', value_lower):
         return True
     
-    # SQL comment and injection patterns that could be used to manipulate parsing
-    sql_patterns = [
-        '/*',           # SQL block comment start
-        '*/',           # SQL block comment end
-        ';--',          # Statement terminator + comment
-        "'; ",          # Quote + statement terminator
-        '"; ',          # Double quote + statement terminator
-        'union select', # UNION-based injection
-        'or 1=1',       # Boolean-based injection
-        'and 1=1',      # Boolean-based injection
-        'drop table',   # DDL command
-        'drop database',# DDL command
-        'truncate ',    # DDL command
-        'delete from',  # DML command
-        'insert into',  # DML command
-        'update ',      # DML command (with space to avoid false positive on 'updated')
-    ]
-    
-    for pattern in sql_patterns:
-        if pattern in value_lower:
-            return True
-    
-    return False
+    # Use centralized pattern matching for SQL injection detection
+    return PatternMatcher.matches(value, PatternCategory.SQL_INJECTION)
 
 
 def contains_command_injection_patterns(value: str) -> bool:
@@ -125,20 +105,9 @@ def contains_command_injection_patterns(value: str) -> bool:
     if not value:
         return False
     
-    # Shell metacharacters and command substitution patterns
-    # Note: We're careful not to flag legitimate URL characters
-    dangerous_patterns = [
-        '$(',           # Command substitution
-        '`',            # Backtick command substitution
-        '&&',           # Shell AND operator
-        '||',           # Shell OR operator
-        '\n', '\r\n',   # Newlines (command injection via line breaks)
-        '>${', '>$(', '<$(',  # Redirection with substitution
-    ]
-    
-    for pattern in dangerous_patterns:
-        if pattern in value:
-            return True
+    # Use centralized pattern matching for basic command injection
+    if PatternMatcher.matches(value, PatternCategory.COMMAND_INJECTION):
+        return True
     
     # Check for raw pipe character '|' - but allow URL-encoded %7C
     # Raw pipes in URLs are suspicious; legitimate pipes in passwords should be URL-encoded

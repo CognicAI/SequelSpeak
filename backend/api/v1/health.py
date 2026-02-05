@@ -3,7 +3,6 @@
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import APIRouter
 
@@ -91,7 +90,7 @@ Set `HEALTH_CHECK_DB_URL` environment variable to enable database health checks.
     operation_id="health_check",
     tags=["Health"]
 )
-def health_check() -> HealthCheckResponse:
+async def health_check() -> HealthCheckResponse:
     """
     Perform health check including database connectivity test.
     
@@ -123,7 +122,7 @@ def health_check() -> HealthCheckResponse:
     start_time = time.perf_counter()
     
     try:
-        result = health_monitor.check_connection(
+        result = await health_monitor.check_connection(
             url=check_url,
             timeout=getattr(settings, 'health_check_timeout', 2)
         )
