@@ -107,27 +107,27 @@ The backend establishes PostgreSQL connections using `psycopg` with the followin
 ### Running Tests
 
 ```bash
-# Setup (first time only)
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+# Setup (first time only, from project root)
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r backend/requirements.txt
 
-# Run all tests
-pytest tests/ -v
+# Run all tests (from project root with venv activated)
+pytest backend/tests/ -v
 
 # Run with coverage report
-pytest tests/ -v --cov=services --cov=api --cov-report=term-missing
+pytest backend/tests/ -v --cov=backend/services --cov=backend/api --cov-report=term-missing
 
 # Run specific test files
-pytest tests/test_connection.py -v                    # URL parsing tests
-pytest tests/test_connection_service.py -v            # Connection logic tests
+pytest backend/tests/test_connection.py -v                    # URL parsing tests
+pytest backend/tests/test_connection_service.py -v            # Connection logic tests
 
 # Generate HTML coverage report
-pytest tests/ --cov=services --cov=api --cov-report=html
+pytest backend/tests/ --cov=backend/services --cov=backend/api --cov-report=html
 # Open htmlcov/index.html in your browser
 
 # Run tests with markers
-pytest tests/ -v -m unit                              # Only unit tests
+pytest backend/tests/ -v -m unit                              # Only unit tests
 ```
 
 ### Test Organization
@@ -154,20 +154,26 @@ Tests automatically run on GitHub Actions for:
 ```bash
 # Clone repository
 git clone <repository-url>
-cd SequelSpeak/backend
+cd SequelSpeak
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Create virtual environment at project root
+python3 -m venv .venv
+source .venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install backend dependencies
+pip install -r backend/requirements.txt
 
 # Copy environment template
-cp .env.example .env
+cp backend/.env.example backend/.env
 
-# Run tests to verify setup
-pytest tests/ -v
+# Edit backend/.env with your settings
+# At minimum, set ENVIRONMENT and ALLOWED_ORIGINS
+
+# Run tests to verify setup (from project root)
+pytest backend/tests/ -v
+
+# Or use the quick start script
+./start.sh
 ```
 
 ### Code Quality
