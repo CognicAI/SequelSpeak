@@ -157,10 +157,9 @@ async def demo_scenario_2():
     last_check = await monitor.get_last_check_time()
     time_since = await monitor.get_time_since_last_check()
     
-    print(f"\nTime since last check: {format_duration(time_since)}")
+    print(f"\nLast health check at: {format_timestamp(last_check)}")
+    print(f"Time since last check: {format_duration(time_since)}")
     print("This allows monitoring systems to determine health check frequency")
-
-
 async def demo_scenario_3():
     """
     Scenario 3: Intermittent failures
