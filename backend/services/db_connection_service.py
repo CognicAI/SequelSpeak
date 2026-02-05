@@ -4,7 +4,6 @@ import re
 import asyncio
 from typing import Tuple, Protocol, Optional, Callable, Any
 from urllib.parse import urlparse
-from abc import ABC, abstractmethod
 from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
