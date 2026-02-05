@@ -194,27 +194,45 @@ class ConnectionHealthMonitor:
     """
     
     def __init__(self):
-        """Initialize the health monitor with unknown state and no timestamp history."""
+        """Initialize the health monitor with unknown state and no timestamp history.
+        
+        Note: The asyncio.Lock is lazily initialized on first use to avoid requiring
+        an event loop at instantiation time. This allows the singleton instance to be
+        created at module import time.
+        """
         self._state: ConnectionState = ConnectionState.UNKNOWN
         self._consecutive_failures: int = 0
         self._last_check_time: Optional[float] = None
         self._last_healthy_time: Optional[float] = None
         self._first_failure_time: Optional[float] = None
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
+    
+    def _ensure_lock(self) -> asyncio.Lock:
+        """Lazily initialize the asyncio.Lock on first use.
+        
+        This ensures the lock is only created when an event loop is available,
+        preventing errors when the class is instantiated at module import time.
+        
+        Returns:
+            The asyncio.Lock instance
+        """
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
     
     async def get_state(self) -> ConnectionState:
         """Get the current connection state."""
-        async with self._lock:
+        async with self._ensure_lock():
             return self._state
     
     async def is_healthy(self) -> bool:
         """Check if the connection is currently healthy."""
-        async with self._lock:
+        async with self._ensure_lock():
             return self._state == ConnectionState.CONNECTED
     
     async def get_consecutive_failures(self) -> int:
         """Get the number of consecutive connection failures."""
-        async with self._lock:
+        async with self._ensure_lock():
             return self._consecutive_failures
     
     async def get_last_check_time(self) -> Optional[float]:
@@ -223,7 +241,7 @@ class ConnectionHealthMonitor:
         Returns:
             Unix timestamp (seconds since epoch) or None if no check has been performed
         """
-        async with self._lock:
+        async with self._ensure_lock():
             return self._last_check_time
     
     async def get_last_healthy_time(self) -> Optional[float]:
@@ -232,7 +250,7 @@ class ConnectionHealthMonitor:
         Returns:
             Unix timestamp (seconds since epoch) or None if connection was never healthy
         """
-        async with self._lock:
+        async with self._ensure_lock():
             return self._last_healthy_time
     
     async def get_first_failure_time(self) -> Optional[float]:
@@ -241,7 +259,7 @@ class ConnectionHealthMonitor:
         Returns:
             Unix timestamp (seconds since epoch) or None if connection is currently healthy
         """
-        async with self._lock:
+        async with self._ensure_lock():
             return self._first_failure_time
     
     async def get_downtime_duration(self) -> Optional[float]:
@@ -250,7 +268,7 @@ class ConnectionHealthMonitor:
         Returns:
             Duration in seconds, or None if connection is healthy or never failed
         """
-        async with self._lock:
+        async with self._ensure_lock():
             if self._first_failure_time is None:
                 return None
             return time.time() - self._first_failure_time
@@ -261,7 +279,7 @@ class ConnectionHealthMonitor:
         Returns:
             Duration in seconds, or None if no check has been performed
         """
-        async with self._lock:
+        async with self._ensure_lock():
             if self._last_check_time is None:
                 return None
             return time.time() - self._last_check_time
@@ -272,7 +290,7 @@ class ConnectionHealthMonitor:
         Returns:
             Duration in seconds, or None if connection was never healthy
         """
-        async with self._lock:
+        async with self._ensure_lock():
             if self._last_healthy_time is None:
                 return None
             return time.time() - self._last_healthy_time
@@ -280,7 +298,7 @@ class ConnectionHealthMonitor:
     async def mark_healthy(self) -> None:
         """Mark the connection as healthy, reset failure count, and update timestamps."""
         current_time = time.time()
-        async with self._lock:
+        async with self._ensure_lock():
             self._state = ConnectionState.CONNECTED
             self._consecutive_failures = 0
             self._last_healthy_time = current_time
@@ -290,7 +308,7 @@ class ConnectionHealthMonitor:
     async def mark_unhealthy(self) -> None:
         """Mark the connection as unhealthy, increment failure count, and update timestamps."""
         current_time = time.time()
-        async with self._lock:
+        async with self._ensure_lock():
             self._state = ConnectionState.DISCONNECTED
             self._consecutive_failures += 1
             # Only set first_failure_time on the initial failure
@@ -329,7 +347,7 @@ class ConnectionHealthMonitor:
         
         # Record the check time
         current_time = time.time()
-        async with self._lock:
+        async with self._ensure_lock():
             self._last_check_time = current_time
         
         retries = 0

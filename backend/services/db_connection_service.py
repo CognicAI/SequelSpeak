@@ -214,7 +214,7 @@ class DBConnectionService:
                 error_code=ErrorCode.INVALID_URL
             )
 
-    async def test_connection_one_shot(self, url: str) -> ConnectionResult:
+    async def test_connection_oneshot(self, url: str) -> ConnectionResult:
         """
         Test database connection using a one-shot connection (no pooling).
         Protected by circuit breaker to prevent overwhelming the database.
