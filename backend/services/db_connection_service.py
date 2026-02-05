@@ -8,7 +8,7 @@ from config import settings
 from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
 from utils.input_validator import validate_connection_url, ValidationResult
-from utils.connection_resilience import is_connection_lost_error, health_monitor, ConnectionHealthMonitor
+from utils.connection_resilience import is_connection_lost_error
 from utils.circuit_breaker import db_circuit_breaker, CircuitBreakerError, CircuitBreaker
 from utils.patterns import PatternMatcher, PatternCategory
 from services.connection_pool import pool_manager, ConnectionPoolManager
