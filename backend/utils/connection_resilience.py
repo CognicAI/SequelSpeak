@@ -16,6 +16,7 @@ import psycopg
 
 from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
+from utils.patterns import PatternMatcher, PatternCategory
 
 T = TypeVar("T")
 
@@ -29,25 +30,6 @@ class ConnectionState(str, Enum):
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     UNKNOWN = "unknown"
-
-
-# Patterns that indicate a dropped/lost connection (runtime failure)
-# These are distinct from initial connection failures (host unreachable, auth failed, etc.)
-CONNECTION_LOST_PATTERNS = [
-    "connection closed",
-    "server closed the connection unexpectedly",
-    "connection reset",
-    "broken pipe",
-    "connection terminated",
-    "connection already closed",
-    "connection is closed",
-    "connection has been closed",
-    "connection was closed",
-    "lost connection",
-    "server has gone away",
-    "connection timed out during operation",
-    "connection dropped",
-]
 
 
 def is_connection_lost_error(exception: Exception) -> bool:
@@ -78,18 +60,17 @@ def is_connection_lost_error(exception: Exception) -> bool:
     if isinstance(exception, psycopg.OperationalError):
         error_msg = str(exception).lower()
         
-        # Explicitly exclude SSL/TLS errors - these indicate configuration issues
+        # Priority 1: Explicitly exclude SSL/TLS errors - these indicate configuration issues
         # and should not be retried
-        ssl_patterns = [
-            "ssl error", "ssl connection", "ssl handshake", "ssl syscall",
-            "certificate verify", "certificate validation", "certificate_verify_failed",
-            "tlsv1", "ssl_error", "certificate expired", "certificate invalid",
-            "self-signed certificate"
-        ]
-        if any(pattern in error_msg for pattern in ssl_patterns):
+        if PatternMatcher.matches(error_msg, PatternCategory.SSL_ERROR):
             return False
         
-        # Explicitly exclude timeout errors - these indicate network/performance issues
+        # Priority 2: Check for SSL SYSCALL and host unreachable patterns
+        # These are network-level failures, not runtime connection drops
+        if PatternMatcher.matches(error_msg, PatternCategory.HOST_UNREACHABLE):
+            return False
+        
+        # Priority 3: Explicitly exclude timeout errors - these indicate network/performance issues
         # that won't resolve with immediate retry
         # However, "connection timed out during operation" indicates a dropped connection
         # and should be retryable
@@ -99,8 +80,9 @@ def is_connection_lost_error(exception: Exception) -> bool:
         if "timed out" in error_msg and "during operation" not in error_msg:
             return False
         
-        # Check for connection lost patterns
-        if any(pattern in error_msg for pattern in CONNECTION_LOST_PATTERNS):
+        # Priority 4: Check for connection lost patterns using centralized pattern matching
+        # These are runtime connection drops that may be transient
+        if PatternMatcher.matches(error_msg, PatternCategory.CONNECTION_LOST):
             return True
     
     # Check for generic socket/connection errors

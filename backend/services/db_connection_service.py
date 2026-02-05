@@ -10,6 +10,7 @@ from utils.security import mask_connection_url
 from utils.input_validator import validate_connection_url
 from utils.connection_resilience import is_connection_lost_error, health_monitor
 from utils.circuit_breaker import db_circuit_breaker, CircuitBreakerError
+from utils.patterns import PatternMatcher, PatternCategory
 from services.connection_pool import pool_manager
 
 # Configure logger
@@ -19,47 +20,43 @@ logger = logging.getLogger(__name__)
 class ErrorClassifier:
     """
     Classifies database connection errors into specific error types.
-    Uses a data-driven approach to eliminate code duplication.
+    Uses a data-driven approach with centralized pattern matching.
     """
     
-    # Error patterns mapped to (ErrorCode, user_message_template)
-    ERROR_PATTERNS = [
+    # Error patterns mapped to (PatternCategory, ErrorCode, user_message_template)
+    # Using centralized PatternCategory for consistency across the codebase
+    ERROR_MAPPINGS = [
         # Authentication errors
         (
-            ["password authentication failed", "authentication failed", 
-             "no pg_hba.conf entry", "permission denied"],
+            PatternCategory.AUTH_ERROR,
             ErrorCode.AUTH_FAILED,
             "Connection failed: Authentication error. "
             "Please verify your username, password, and access permissions."
         ),
         # Database not found
         (
-            ["does not exist.*database", "database.*does not exist"],
+            PatternCategory.DATABASE_NOT_FOUND,
             ErrorCode.DATABASE_NOT_FOUND,
             "Connection failed: The specified database could not be found. "
             "Please verify the database name and that it exists on the server."
         ),
         # SSL/TLS errors
         (
-            ["ssl error", "ssl connection", "ssl handshake", "certificate verify",
-             "certificate validation", "certificate_verify_failed", "tlsv1",
-             "ssl_error", "certificate expired", "certificate invalid", 
-             "self-signed certificate"],
+            PatternCategory.SSL_ERROR,
             ErrorCode.SSL_ERROR,
             "Connection failed: SSL/TLS certificate error. "
             "Please verify your SSL configuration and certificate validity."
         ),
         # Timeout errors
         (
-            ["timeout expired", "timed out", "connection timeout"],
+            PatternCategory.TIMEOUT_ERROR,
             ErrorCode.TIMEOUT,
             "Connection failed: Connection attempt timed out after {timeout} seconds. "
             "Please verify the host, port, and network connectivity, or try increasing the timeout."
         ),
         # Network/Host errors
         (
-            ["ssl syscall", "could not connect to server", "connection refused",
-             "could not translate host name", "network is unreachable"],
+            PatternCategory.HOST_UNREACHABLE,
             ErrorCode.HOST_UNREACHABLE,
             "Connection failed: Unable to reach the database server. "
             "Please verify the host, port, and network connectivity."
@@ -69,7 +66,7 @@ class ErrorClassifier:
     @classmethod
     def classify_error(cls, error_details: str, timeout: int) -> Tuple[ErrorCode, str]:
         """
-        Classifies a database error based on error message patterns.
+        Classifies a database error based on centralized pattern matching.
         
         Args:
             error_details: The error message from the database driver
@@ -78,19 +75,11 @@ class ErrorClassifier:
         Returns:
             Tuple of (ErrorCode, user_friendly_message)
         """
-        details_lower = error_details.lower()
-        
-        for patterns, error_code, message_template in cls.ERROR_PATTERNS:
-            for pattern in patterns:
-                # Support regex patterns or simple string matching
-                if ".*" in pattern:
-                    if re.search(pattern, details_lower):
-                        message = message_template.format(timeout=timeout)
-                        return error_code, message
-                else:
-                    if pattern in details_lower:
-                        message = message_template.format(timeout=timeout)
-                        return error_code, message
+        # Use centralized PatternMatcher for consistent detection
+        for pattern_category, error_code, message_template in cls.ERROR_MAPPINGS:
+            if PatternMatcher.matches(error_details, pattern_category):
+                message = message_template.format(timeout=timeout)
+                return error_code, message
         
         # Fallback generic error
         return (

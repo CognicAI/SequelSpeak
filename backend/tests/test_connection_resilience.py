@@ -22,8 +22,8 @@ from utils.connection_resilience import (
     is_connection_lost_error,
     detect_connection_failure,
     ConnectionHealthMonitor,
-    CONNECTION_LOST_PATTERNS,
 )
+from utils.patterns import PatternMatcher, PatternCategory
 from schemas.errors import ErrorCode, ConnectionResult
 
 
@@ -525,7 +525,7 @@ class TestCredentialSafety:
 class TestConnectionLostPatterns:
     """Tests for all defined connection lost patterns."""
 
-    @pytest.mark.parametrize("pattern", CONNECTION_LOST_PATTERNS)
+    @pytest.mark.parametrize("pattern", PatternMatcher.get_patterns(PatternCategory.CONNECTION_LOST))
     def test_all_patterns_detected(self, pattern):
         """Test that all defined patterns are detected as connection lost."""
         error = psycopg.OperationalError(f"Database error: {pattern}")
