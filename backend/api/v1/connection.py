@@ -69,8 +69,11 @@ async def test_connection(request: Request, body: ConnectionRequest) -> Connecti
     Raises:
         HTTPException: 400 error if URL validation fails or connection cannot be established
     """
+    # Initialize service with default dependencies (production configuration)
+    db_service = DBConnectionService()
+    
     # 1. Structural Validation
-    validation_result = DBConnectionService.parse_and_verify_url(body.connection_url)
+    validation_result = db_service.parse_and_verify_url(body.connection_url)
     if not validation_result.success:
         raise DatabaseConnectionError(
             detail=validation_result.message,
@@ -78,7 +81,7 @@ async def test_connection(request: Request, body: ConnectionRequest) -> Connecti
         )
 
     # 2. Connection Test (one-shot, no pooling)
-    connection_result = await DBConnectionService.test_connection_oneshot(body.connection_url)
+    connection_result = await db_service.test_connection_oneshot(body.connection_url)
     
     if connection_result.success:
         return ConnectionTestResponse(

@@ -32,6 +32,12 @@ from schemas.errors import ErrorCode
 from utils.connection_resilience import health_monitor, ConnectionState
 
 
+@pytest.fixture
+def db_service():
+    """Create a DBConnectionService instance with default dependencies."""
+    return DBConnectionService()
+
+
 @pytest.fixture(autouse=True)
 def reset_health_monitor():
     """Reset health monitor state before each test to prevent state leakage."""
@@ -48,7 +54,7 @@ def reset_health_monitor():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_success():
+async def test_connection_success(db_service):
     """Test successful database connection via pool"""
     mock_pool = AsyncMock(spec=AsyncConnectionPool)
     mock_conn = AsyncMock()
@@ -64,7 +70,7 @@ async def test_connection_success():
     with patch('services.db_connection_service.pool_manager.get_pool',
                new_callable=AsyncMock,
                return_value=mock_pool):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         assert result.success is True
         assert result.message == "Connection successful!"
@@ -72,7 +78,7 @@ async def test_connection_success():
 
 
 @pytest.mark.asyncio
-async def test_connection_success_select_verification():
+async def test_connection_success_select_verification(db_service):
     """Test that SELECT 1 is actually executed and verified"""
     mock_pool = AsyncMock(spec=AsyncConnectionPool)
     mock_conn = AsyncMock()
@@ -89,7 +95,7 @@ async def test_connection_success_select_verification():
     with patch('services.db_connection_service.pool_manager.get_pool',
                new_callable=AsyncMock,
                return_value=mock_pool):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         assert result.success is True
         mock_cursor.execute.assert_called_once_with("SELECT 1")
@@ -101,7 +107,7 @@ async def test_connection_success_select_verification():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_auth_failed():
+async def test_connection_auth_failed(db_service):
     """Test authentication failure error handling"""
     error_msg = "password authentication failed for user 'testuser'"
     
@@ -110,7 +116,7 @@ async def test_connection_auth_failed():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_auth_error)):
-        result = await DBConnectionService.test_connection("postgres://user:wrongpass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:wrongpass@localhost:5432/db")
         
         assert result.success is False
         assert "Authentication error" in result.message or "Authentication failed" in result.message
@@ -120,7 +126,7 @@ async def test_connection_auth_failed():
 
 
 @pytest.mark.asyncio
-async def test_connection_auth_failed_md5():
+async def test_connection_auth_failed_md5(db_service):
     """Test MD5 authentication failure"""
     error_msg = "FATAL:  password authentication failed for user 'admin'"
     
@@ -129,7 +135,7 @@ async def test_connection_auth_failed_md5():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_auth_error)):
-        result = await DBConnectionService.test_connection("postgres://admin:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://admin:pass@localhost:5432/db")
         
         assert result.success is False
         assert result.error_code == ErrorCode.AUTH_FAILED
@@ -140,7 +146,7 @@ async def test_connection_auth_failed_md5():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_database_not_found():
+async def test_connection_database_not_found(db_service):
     """Test database does not exist error"""
     error_msg = 'database "nonexistent_db" does not exist'
     
@@ -149,7 +155,7 @@ async def test_connection_database_not_found():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_db_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/nonexistent_db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/nonexistent_db")
         
         assert result.success is False
         assert "database" in result.message.lower() and ("not" in result.message.lower() or "could not be found" in result.message.lower())
@@ -157,7 +163,7 @@ async def test_connection_database_not_found():
 
 
 @pytest.mark.asyncio
-async def test_connection_database_not_found_alternative_message():
+async def test_connection_database_not_found_alternative_message(db_service):
     """Test alternative database not found message"""
     error_msg = 'FATAL:  database "test_db" does not exist'
     
@@ -166,7 +172,7 @@ async def test_connection_database_not_found_alternative_message():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_db_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/test_db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/test_db")
         
         assert result.success is False
         assert result.error_code == ErrorCode.DATABASE_NOT_FOUND
@@ -177,7 +183,7 @@ async def test_connection_database_not_found_alternative_message():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_host_unreachable():
+async def test_connection_host_unreachable(db_service):
     """Test host unreachable error (connection refused)"""
     error_msg = "Connection refused: could not connect to server"
     
@@ -186,7 +192,7 @@ async def test_connection_host_unreachable():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_host_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@unreachable-host:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@unreachable-host:5432/db")
         
         assert result.success is False
         assert "unable to reach" in result.message.lower() or "refused" in result.message.lower() or "unreachable" in result.message.lower()
@@ -194,7 +200,7 @@ async def test_connection_host_unreachable():
 
 
 @pytest.mark.asyncio
-async def test_connection_refused_port():
+async def test_connection_refused_port(db_service):
     """Test connection refused on specific port"""
     error_msg = "could not connect to server: Connection refused on port 5433"
     
@@ -203,14 +209,14 @@ async def test_connection_refused_port():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_host_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5433/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5433/db")
         
         assert result.success is False
         assert result.error_code == ErrorCode.HOST_UNREACHABLE
 
 
 @pytest.mark.asyncio
-async def test_connection_no_route_to_host():
+async def test_connection_no_route_to_host(db_service):
     """Test no route to host error"""
     error_msg = "No route to host"
     
@@ -219,7 +225,7 @@ async def test_connection_no_route_to_host():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_route_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@192.168.99.99:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@192.168.99.99:5432/db")
         
         assert result.success is False
         # This generic message maps to CONNECTION_ERROR, not HOST_UNREACHABLE
@@ -231,7 +237,7 @@ async def test_connection_no_route_to_host():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_ssl_error():
+async def test_connection_ssl_error(db_service):
     """Test SSL certificate verification failure"""
     error_msg = "SSL certificate verify failed"
     
@@ -240,7 +246,7 @@ async def test_connection_ssl_error():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_ssl_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@secure-db.com:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@secure-db.com:5432/db")
         
         assert result.success is False
         assert "SSL" in result.message or "certificate" in result.message.lower()
@@ -248,7 +254,7 @@ async def test_connection_ssl_error():
 
 
 @pytest.mark.asyncio
-async def test_connection_ssl_required():
+async def test_connection_ssl_required(db_service):
     """Test SSL required but not provided"""
     error_msg = "SSL connection required but not configured"
     
@@ -257,7 +263,7 @@ async def test_connection_ssl_required():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_ssl_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@secure-db.com:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@secure-db.com:5432/db")
         
         assert result.success is False
         assert result.error_code == ErrorCode.SSL_ERROR
@@ -268,7 +274,7 @@ async def test_connection_ssl_required():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_timeout():
+async def test_connection_timeout(db_service):
     """Test connection timeout error"""
     error_msg = "timeout expired: connection timeout after 10 seconds"
     
@@ -277,7 +283,7 @@ async def test_connection_timeout():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_timeout_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@slow-server.com:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@slow-server.com:5432/db")
         
         assert result.success is False
         assert "timed out" in result.message or "timeout" in result.message.lower()
@@ -285,7 +291,7 @@ async def test_connection_timeout():
 
 
 @pytest.mark.asyncio
-async def test_connection_timeout_timed_out():
+async def test_connection_timeout_timed_out(db_service):
     """Test alternative timeout error message"""
     error_msg = "server closed the connection unexpectedly: timeout timed out"
     
@@ -294,7 +300,7 @@ async def test_connection_timeout_timed_out():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_timeout_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@slow-server.com:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@slow-server.com:5432/db")
         
         assert result.success is False
         assert "timed out" in result.message or "timeout" in result.message.lower()
@@ -306,7 +312,7 @@ async def test_connection_timeout_timed_out():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_operational_error_sanitization():
+async def test_connection_operational_error_sanitization(db_service):
     """Test that sensitive information is sanitized from error messages"""
     error_msg = "Sensitive internal DB info: password mismatch for user 'admin'"
     
@@ -315,7 +321,7 @@ async def test_connection_operational_error_sanitization():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_sanitize_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         # Error message should be sanitized
@@ -325,7 +331,7 @@ async def test_connection_operational_error_sanitization():
 
 
 @pytest.mark.asyncio
-async def test_connection_error_no_credentials_leak():
+async def test_connection_error_no_credentials_leak(db_service):
     """Test that connection URLs with credentials never appear in error messages"""
     sensitive_url = "postgres://admin:supersecret123@prod-db.example.com:5432/production"
     
@@ -334,7 +340,7 @@ async def test_connection_error_no_credentials_leak():
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_connection_error)):
-        result = await DBConnectionService.test_connection(sensitive_url)
+        result = await db_service.test_connection(sensitive_url)
         
         assert result.success is False
         # Verify NO part of the URL appears in the message
@@ -349,7 +355,7 @@ async def test_connection_error_no_credentials_leak():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_retry_on_transient_failure():
+async def test_connection_retry_on_transient_failure(db_service):
     """Test that transient failures trigger retry with exponential backoff"""
     error_msg = "connection lost: server closed the connection unexpectedly"
     
@@ -360,7 +366,7 @@ async def test_connection_retry_on_transient_failure():
                new=AsyncMock(side_effect=raise_transient_error)), \
          patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
         
-        result = await DBConnectionService.test_connection("postgres://user:pass@flaky-db:5432/db", max_retries=2)
+        result = await db_service.test_connection("postgres://user:pass@flaky-db:5432/db", max_retries=2)
         
         assert result.success is False
         # Should have retried 2 times (max_retries=2 means 3 total attempts: initial + 2 retries)
@@ -371,7 +377,7 @@ async def test_connection_retry_on_transient_failure():
 
 
 @pytest.mark.asyncio
-async def test_connection_no_retry_on_auth_failure():
+async def test_connection_no_retry_on_auth_failure(db_service):
     """Test that authentication failures don't trigger retries"""
     error_msg = "password authentication failed"
     
@@ -382,7 +388,7 @@ async def test_connection_no_retry_on_auth_failure():
                new=AsyncMock(side_effect=raise_auth_error)), \
          patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
         
-        result = await DBConnectionService.test_connection("postgres://user:wrongpass@localhost:5432/db", max_retries=2)
+        result = await db_service.test_connection("postgres://user:wrongpass@localhost:5432/db", max_retries=2)
         
         assert result.success is False
         assert result.error_code == ErrorCode.AUTH_FAILED
@@ -395,14 +401,14 @@ async def test_connection_no_retry_on_auth_failure():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_generic_error():
+async def test_connection_generic_error(db_service):
     """Test generic unexpected error handling"""
     async def raise_generic_error(*args, **kwargs):
         raise Exception("Total failure")
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_generic_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         assert "unexpected error" in result.message.lower()
@@ -410,14 +416,14 @@ async def test_connection_generic_error():
 
 
 @pytest.mark.asyncio
-async def test_connection_value_error():
+async def test_connection_value_error(db_service):
     """Test ValueError handling"""
     async def raise_value_error(*args, **kwargs):
         raise ValueError("Invalid connection parameter")
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_value_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         assert "unexpected error" in result.message.lower()
@@ -425,14 +431,14 @@ async def test_connection_value_error():
 
 
 @pytest.mark.asyncio
-async def test_connection_type_error():
+async def test_connection_type_error(db_service):
     """Test TypeError handling"""
     async def raise_type_error(*args, **kwargs):
         raise TypeError("Type mismatch")
     
     with patch('services.db_connection_service.pool_manager.get_pool',
                new=AsyncMock(side_effect=raise_type_error)):
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         assert "unexpected error" in result.message.lower()
@@ -443,24 +449,24 @@ async def test_connection_type_error():
 # URL VALIDATION TESTS (Sync - no pool involved)
 # ============================================================================
 
-def test_parse_and_verify_url_valid():
+def test_parse_and_verify_url_valid(db_service):
     """Test valid URL parsing"""
-    result = DBConnectionService.parse_and_verify_url("postgresql://user:pass@localhost:5432/db")
+    result = db_service.parse_and_verify_url("postgresql://user:pass@localhost:5432/db")
     assert result.success is True
     assert result.error_code is None
 
 
-def test_parse_and_verify_url_invalid_scheme():
+def test_parse_and_verify_url_invalid_scheme(db_service):
     """Test invalid URL scheme"""
-    result = DBConnectionService.parse_and_verify_url("mysql://user:pass@localhost:3306/db")
+    result = db_service.parse_and_verify_url("mysql://user:pass@localhost:3306/db")
     assert result.success is False
     assert result.error_code == ErrorCode.INVALID_URL
     assert "scheme" in result.message.lower()
 
 
-def test_parse_and_verify_url_missing_host():
+def test_parse_and_verify_url_missing_host(db_service):
     """Test URL missing host"""
-    result = DBConnectionService.parse_and_verify_url("postgresql:///db")
+    result = db_service.parse_and_verify_url("postgresql:///db")
     assert result.success is False
     assert result.error_code == ErrorCode.INVALID_URL
     assert "Host is missing" in result.message
@@ -471,7 +477,7 @@ def test_parse_and_verify_url_missing_host():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_error_codes_are_correct_enum_values():
+async def test_error_codes_are_correct_enum_values(db_service):
     """Test that all returned error codes are valid ErrorCode enum values"""
     test_cases = [
         ("password authentication failed", ErrorCode.AUTH_FAILED),
@@ -488,7 +494,7 @@ async def test_error_codes_are_correct_enum_values():
         
         with patch('services.db_connection_service.pool_manager.get_pool',
                    new=AsyncMock(side_effect=raise_test_error)):
-            result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+            result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
             assert result.error_code == expected_code, f"Expected {expected_code} for error: {error_msg}"
 
 
@@ -497,7 +503,7 @@ async def test_error_codes_are_correct_enum_values():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_connection_pool_is_used():
+async def test_connection_pool_is_used(db_service):
     """Test that connection pool is properly created and used"""
     mock_pool = AsyncMock(spec=AsyncConnectionPool)
     mock_conn = AsyncMock()
@@ -513,7 +519,7 @@ async def test_connection_pool_is_used():
     with patch('services.db_connection_service.pool_manager.get_pool',
                new_callable=AsyncMock,
                return_value=mock_pool) as mock_get_pool:
-        result = await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         # Verify pool was requested
         mock_get_pool.assert_called_once()
@@ -521,7 +527,7 @@ async def test_connection_pool_is_used():
 
 
 @pytest.mark.asyncio
-async def test_connection_pool_settings_passed():
+async def test_connection_pool_settings_passed(db_service):
     """Test that pool configuration settings are passed correctly"""
     from config import settings
     
@@ -539,7 +545,7 @@ async def test_connection_pool_settings_passed():
     with patch('services.db_connection_service.pool_manager.get_pool',
                new_callable=AsyncMock,
                return_value=mock_pool) as mock_get_pool:
-        await DBConnectionService.test_connection("postgres://user:pass@localhost:5432/db")
+        await db_service.test_connection("postgres://user:pass@localhost:5432/db")
         
         # Verify pool settings were passed from config - resilient to parameter order
         mock_get_pool.assert_called_once()

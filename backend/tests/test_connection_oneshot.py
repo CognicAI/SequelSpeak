@@ -21,13 +21,20 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.db_connection_service import DBConnectionService
 from schemas.errors import ErrorCode
 
+@pytest.fixture
+def db_service():
+    """Create a DBConnectionService instance with default dependencies."""
+    return DBConnectionService()
+
+
+
 
 # ============================================================================
 # SUCCESSFUL CONNECTION TESTS
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_connection_success():
+async def test_oneshot_connection_success(db_service):
     """Test successful one-shot connection without pooling"""
     mock_conn = AsyncMock()
     mock_cursor = AsyncMock()
@@ -42,7 +49,7 @@ async def test_oneshot_connection_success():
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                return_value=mock_conn):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
         
         assert result.success is True
         assert result.message == "Connection successful!"
@@ -53,7 +60,7 @@ async def test_oneshot_connection_success():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_connection_no_pool_manager_called():
+async def test_oneshot_connection_no_pool_manager_called(db_service):
     """Verify that pool_manager.get_pool is NEVER called for one-shot connections"""
     mock_conn = AsyncMock()
     mock_cursor = AsyncMock()
@@ -70,7 +77,7 @@ async def test_oneshot_connection_no_pool_manager_called():
         with patch('services.db_connection_service.pool_manager.get_pool',
                    new_callable=AsyncMock) as mock_get_pool:
             
-            result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+            result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
             
             assert result.success is True
             # Critical assertion: pool_manager should never be called
@@ -78,7 +85,7 @@ async def test_oneshot_connection_no_pool_manager_called():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_multiple_connections_no_caching():
+async def test_oneshot_multiple_connections_no_caching(db_service):
     """Verify that multiple one-shot connections don't create cached pools"""
     mock_conn = AsyncMock()
     mock_cursor = AsyncMock()
@@ -101,7 +108,7 @@ async def test_oneshot_multiple_connections_no_caching():
         ]
         
         for url in urls:
-            result = await DBConnectionService.test_connection_oneshot(url)
+            result = await db_service.test_connection_oneshot(url)
             assert result.success is True
         
         # Verify AsyncConnection.connect was called 3 times (once per test)
@@ -112,7 +119,7 @@ async def test_oneshot_multiple_connections_no_caching():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_connection_select_verification():
+async def test_oneshot_connection_select_verification(db_service):
     """Test that SELECT 1 is executed and verified in one-shot connection"""
     mock_conn = AsyncMock()
     mock_cursor = AsyncMock()
@@ -127,7 +134,7 @@ async def test_oneshot_connection_select_verification():
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                return_value=mock_conn):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
         
         assert result.success is True
         mock_cursor.execute.assert_called_once_with("SELECT 1")
@@ -135,7 +142,7 @@ async def test_oneshot_connection_select_verification():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_connection_timeout_parameter():
+async def test_oneshot_connection_timeout_parameter(db_service):
     """Verify that db_connection_timeout is passed to AsyncConnection.connect"""
     mock_conn = AsyncMock()
     mock_cursor = AsyncMock()
@@ -150,7 +157,7 @@ async def test_oneshot_connection_timeout_parameter():
                new_callable=AsyncMock,
                return_value=mock_conn) as mock_connect:
         
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
         
         assert result.success is True
         
@@ -166,14 +173,14 @@ async def test_oneshot_connection_timeout_parameter():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_auth_failed():
+async def test_oneshot_auth_failed(db_service):
     """Test authentication failure handling in one-shot connection"""
     error = psycopg.OperationalError("password authentication failed for user \"testuser\"")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://testuser:wrongpass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://testuser:wrongpass@localhost:5432/db")
         
         assert result.success is False
         assert "Authentication error" in result.message
@@ -181,14 +188,14 @@ async def test_oneshot_auth_failed():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_no_pg_hba_entry():
+async def test_oneshot_no_pg_hba_entry(db_service):
     """Test no pg_hba.conf entry error in one-shot connection"""
     error = psycopg.OperationalError('no pg_hba.conf entry for host "192.168.1.100", user "testuser"')
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://testuser:pass@192.168.1.100:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://testuser:pass@192.168.1.100:5432/db")
         
         assert result.success is False
         assert "Authentication error" in result.message
@@ -200,14 +207,14 @@ async def test_oneshot_no_pg_hba_entry():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_database_not_found():
+async def test_oneshot_database_not_found(db_service):
     """Test database not found error in one-shot connection"""
     error = psycopg.OperationalError('database "nonexistent_db" does not exist')
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/nonexistent_db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/nonexistent_db")
         
         assert result.success is False
         assert "database could not be found" in result.message
@@ -219,14 +226,14 @@ async def test_oneshot_database_not_found():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_host_unreachable():
+async def test_oneshot_host_unreachable(db_service):
     """Test host unreachable error in one-shot connection"""
     error = psycopg.OperationalError("could not connect to server: Connection refused")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@unreachable:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@unreachable:5432/db")
         
         assert result.success is False
         assert "Unable to reach the database server" in result.message
@@ -234,14 +241,14 @@ async def test_oneshot_host_unreachable():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_connection_refused():
+async def test_oneshot_connection_refused(db_service):
     """Test connection refused error in one-shot connection"""
     error = psycopg.OperationalError("Connection refused (tcp://localhost:5433)")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5433/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5433/db")
         
         assert result.success is False
         assert "Unable to reach the database server" in result.message
@@ -253,14 +260,14 @@ async def test_oneshot_connection_refused():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_ssl_error():
+async def test_oneshot_ssl_error(db_service):
     """Test SSL/TLS error in one-shot connection"""
     error = psycopg.OperationalError("SSL error: certificate verify failed")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db?sslmode=require")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db?sslmode=require")
         
         assert result.success is False
         assert "SSL/TLS certificate error" in result.message
@@ -268,14 +275,14 @@ async def test_oneshot_ssl_error():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_ssl_required():
+async def test_oneshot_ssl_required(db_service):
     """Test SSL required but not supported error in one-shot connection"""
     error = psycopg.OperationalError("SSL connection has been requested but SSL is not supported")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db?sslmode=require")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db?sslmode=require")
         
         assert result.success is False
         assert "SSL/TLS certificate error" in result.message
@@ -287,14 +294,14 @@ async def test_oneshot_ssl_required():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_timeout():
+async def test_oneshot_timeout(db_service):
     """Test connection timeout error in one-shot connection"""
     error = psycopg.OperationalError("timeout expired")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@slow-host:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@slow-host:5432/db")
         
         assert result.success is False
         assert "timed out" in result.message
@@ -302,14 +309,14 @@ async def test_oneshot_timeout():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_connection_timeout():
+async def test_oneshot_connection_timeout(db_service):
     """Test connection timeout alternative message in one-shot connection"""
     error = psycopg.OperationalError("connection timeout")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@slow-host:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@slow-host:5432/db")
         
         assert result.success is False
         assert "timed out" in result.message
@@ -321,7 +328,7 @@ async def test_oneshot_connection_timeout():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_error_no_credentials_leak():
+async def test_oneshot_error_no_credentials_leak(db_service):
     """Verify that error messages don't leak credentials in one-shot connection"""
     # Create error with credentials in message
     error = psycopg.OperationalError(
@@ -331,7 +338,7 @@ async def test_oneshot_error_no_credentials_leak():
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot(
+        result = await db_service.test_connection_oneshot(
             "postgres://testuser:SecretPass123@badhost:5432/db"
         )
         
@@ -347,14 +354,14 @@ async def test_oneshot_error_no_credentials_leak():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_generic_exception():
+async def test_oneshot_generic_exception(db_service):
     """Test generic exception handling in one-shot connection"""
     error = Exception("Unexpected database error")
     
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                side_effect=error):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         assert "unexpected error" in result.message.lower()
@@ -362,7 +369,7 @@ async def test_oneshot_generic_exception():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_query_verification_failure():
+async def test_oneshot_query_verification_failure(db_service):
     """Test when SELECT 1 returns unexpected result in one-shot connection"""
     mock_conn = AsyncMock()
     mock_cursor = AsyncMock()
@@ -376,7 +383,7 @@ async def test_oneshot_query_verification_failure():
     with patch('psycopg.AsyncConnection.connect',
                new_callable=AsyncMock,
                return_value=mock_conn):
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         assert "verification" in result.message.lower()
@@ -388,7 +395,7 @@ async def test_oneshot_query_verification_failure():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_no_retry_on_transient_failure():
+async def test_oneshot_no_retry_on_transient_failure(db_service):
     """Verify that one-shot connections do NOT retry on transient failures"""
     # Simulate a transient connection error that would trigger retry in test_connection()
     error = psycopg.OperationalError("server closed the connection unexpectedly")
@@ -397,7 +404,7 @@ async def test_oneshot_no_retry_on_transient_failure():
                new_callable=AsyncMock,
                side_effect=error) as mock_connect:
         
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         # Critical: Should only attempt connection ONCE (no retry)
@@ -405,7 +412,7 @@ async def test_oneshot_no_retry_on_transient_failure():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_no_retry_on_auth_failure():
+async def test_oneshot_no_retry_on_auth_failure(db_service):
     """Verify that one-shot connections do NOT retry on auth failures"""
     error = psycopg.OperationalError("password authentication failed")
     
@@ -413,7 +420,7 @@ async def test_oneshot_no_retry_on_auth_failure():
                new_callable=AsyncMock,
                side_effect=error) as mock_connect:
         
-        result = await DBConnectionService.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
+        result = await db_service.test_connection_oneshot("postgres://user:pass@localhost:5432/db")
         
         assert result.success is False
         assert result.error_code == ErrorCode.AUTH_FAILED
@@ -426,7 +433,7 @@ async def test_oneshot_no_retry_on_auth_failure():
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_oneshot_vs_pooled_behavior():
+async def test_oneshot_vs_pooled_behavior(db_service):
     """
     Compare one-shot vs pooled connection behavior side-by-side.
     This test documents the key architectural differences.
@@ -455,7 +462,7 @@ async def test_oneshot_vs_pooled_behavior():
                    new_callable=AsyncMock) as mock_pool_manager:
             
             # Call one-shot
-            oneshot_result = await DBConnectionService.test_connection_oneshot(url)
+            oneshot_result = await db_service.test_connection_oneshot(url)
             
             # Assertions for one-shot
             assert oneshot_result.success is True
@@ -470,7 +477,7 @@ async def test_oneshot_vs_pooled_behavior():
                    new_callable=AsyncMock) as mock_direct:
             
             # Call pooled
-            pooled_result = await DBConnectionService.test_connection(url)
+            pooled_result = await db_service.test_connection(url)
             
             # Assertions for pooled
             assert pooled_result.success is True

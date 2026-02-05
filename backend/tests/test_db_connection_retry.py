@@ -19,6 +19,13 @@ from services.db_connection_service import DBConnectionService
 from utils.connection_resilience import health_monitor, ConnectionState
 from schemas.errors import ErrorCode
 
+@pytest.fixture
+def db_service():
+    """Create a DBConnectionService instance with default dependencies."""
+    return DBConnectionService()
+
+
+
 
 @pytest.fixture(autouse=True)
 def reset_health_monitor():
@@ -35,7 +42,7 @@ class TestDBConnectionServiceRetry:
     """Test retry behavior in DBConnectionService.test_connection()"""
 
     @pytest.mark.asyncio
-    async def test_successful_recovery_after_transient_failures(self):
+    async def test_successful_recovery_after_transient_failures(self, db_service):
         """Test that connection recovers after transient failures"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -63,7 +70,7 @@ class TestDBConnectionServiceRetry:
                 mock_pool
             ]
             
-            result = await DBConnectionService.test_connection(db_url)
+            result = await db_service.test_connection(db_url)
             
             # Verify successful recovery
             assert result.success is True
@@ -73,7 +80,7 @@ class TestDBConnectionServiceRetry:
             assert await health_monitor.get_state() == ConnectionState.CONNECTED
 
     @pytest.mark.asyncio
-    async def test_retry_limit_enforcement(self):
+    async def test_retry_limit_enforcement(self, db_service):
         """Test that retry attempts stop at max_retries"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -85,7 +92,7 @@ class TestDBConnectionServiceRetry:
             
             mock_get_pool.side_effect = fail_exception
             
-            result = await DBConnectionService.test_connection(db_url, max_retries=2)
+            result = await db_service.test_connection(db_url, max_retries=2)
             
             # Verify retry limit respected
             assert result.success is False
@@ -95,7 +102,7 @@ class TestDBConnectionServiceRetry:
             assert await health_monitor.get_state() == ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
-    async def test_exponential_backoff_timing(self):
+    async def test_exponential_backoff_timing(self, db_service):
         """Test that delays follow exponential backoff pattern"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -106,7 +113,7 @@ class TestDBConnectionServiceRetry:
             
             mock_get_pool.side_effect = fail_exception
             
-            await DBConnectionService.test_connection(db_url, max_retries=3, initial_delay=1.0)
+            await db_service.test_connection(db_url, max_retries=3, initial_delay=1.0)
             
             # Verify exponential backoff: 1s, 2s, 4s
             assert mock_sleep.call_count == 3
@@ -115,7 +122,7 @@ class TestDBConnectionServiceRetry:
             assert mock_sleep.call_args_list[2][0][0] == 4.0  # Third retry: 4s
 
     @pytest.mark.asyncio
-    async def test_health_monitor_updates_during_retries(self):
+    async def test_health_monitor_updates_during_retries(self, db_service):
         """Test that health monitor is updated on each retry attempt"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -129,14 +136,14 @@ class TestDBConnectionServiceRetry:
             # Initial state
             assert await health_monitor.get_consecutive_failures() == 0
             
-            await DBConnectionService.test_connection(db_url, max_retries=2)
+            await db_service.test_connection(db_url, max_retries=2)
             
             # After 3 failures (1 initial + 2 retries)
             assert await health_monitor.get_consecutive_failures() == 3
             assert await health_monitor.get_state() == ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
-    async def test_health_monitor_reset_on_success(self):
+    async def test_health_monitor_reset_on_success(self, db_service):
         """Test that health monitor is reset when connection succeeds"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -158,14 +165,14 @@ class TestDBConnectionServiceRetry:
         mock_pool.connection = MagicMock(return_value=mock_conn)
         
         with patch("services.db_connection_service.pool_manager.get_pool", return_value=mock_pool):
-            result = await DBConnectionService.test_connection(db_url)
+            result = await db_service.test_connection(db_url)
             
             assert result.success is True
             assert await health_monitor.get_consecutive_failures() == 0
             assert await health_monitor.get_state() == ConnectionState.CONNECTED
 
     @pytest.mark.asyncio
-    async def test_no_retry_on_auth_failure(self):
+    async def test_no_retry_on_auth_failure(self, db_service):
         """Test that authentication errors are not retried"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -177,7 +184,7 @@ class TestDBConnectionServiceRetry:
             
             mock_get_pool.side_effect = auth_error
             
-            result = await DBConnectionService.test_connection(db_url)
+            result = await db_service.test_connection(db_url)
             
             # Should fail immediately without retry
             assert result.success is False
@@ -186,7 +193,7 @@ class TestDBConnectionServiceRetry:
             assert mock_sleep.call_count == 0  # No delays
 
     @pytest.mark.asyncio
-    async def test_no_retry_on_database_not_found(self):
+    async def test_no_retry_on_database_not_found(self, db_service):
         """Test that database not found errors are not retried"""
         db_url = "postgres://user:pass@localhost:5432/nonexistent"
         
@@ -197,7 +204,7 @@ class TestDBConnectionServiceRetry:
             
             mock_get_pool.side_effect = db_error
             
-            result = await DBConnectionService.test_connection(db_url)
+            result = await db_service.test_connection(db_url)
             
             assert result.success is False
             assert result.error_code == ErrorCode.DATABASE_NOT_FOUND
@@ -205,7 +212,7 @@ class TestDBConnectionServiceRetry:
             assert mock_sleep.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_connection_lost_error_code_after_retry_exhaustion(self):
+    async def test_connection_lost_error_code_after_retry_exhaustion(self, db_service):
         """Test that CONNECTION_LOST error code is returned after retries exhausted"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -226,7 +233,7 @@ class TestDBConnectionServiceRetry:
                 
                 mock_get_pool.side_effect = psycopg.OperationalError(error_msg)
                 
-                result = await DBConnectionService.test_connection(db_url, max_retries=1)
+                result = await db_service.test_connection(db_url, max_retries=1)
                 
                 assert result.success is False
                 assert result.error_code == ErrorCode.CONNECTION_LOST, \
@@ -234,7 +241,7 @@ class TestDBConnectionServiceRetry:
                 assert "connection was lost" in result.message.lower()
 
     @pytest.mark.asyncio
-    async def test_custom_retry_parameters(self):
+    async def test_custom_retry_parameters(self, db_service):
         """Test that custom max_retries and initial_delay are respected"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -246,14 +253,14 @@ class TestDBConnectionServiceRetry:
             mock_get_pool.side_effect = fail_exception
             
             # Custom parameters: 1 retry, 0.5s initial delay
-            await DBConnectionService.test_connection(db_url, max_retries=1, initial_delay=0.5)
+            await db_service.test_connection(db_url, max_retries=1, initial_delay=0.5)
             
             assert mock_get_pool.call_count == 2  # 1 initial + 1 retry
             assert mock_sleep.call_count == 1
             assert mock_sleep.call_args_list[0][0][0] == 0.5  # First delay: 0.5s
 
     @pytest.mark.asyncio
-    async def test_retry_with_mixed_errors(self):
+    async def test_retry_with_mixed_errors(self, db_service):
         """Test retry behavior with different error types"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -267,7 +274,7 @@ class TestDBConnectionServiceRetry:
             
             mock_get_pool.side_effect = [connection_lost, auth_failed]
             
-            result = await DBConnectionService.test_connection(db_url, max_retries=5)
+            result = await db_service.test_connection(db_url, max_retries=5)
             
             # Should retry after first error, then fail on auth error
             assert result.success is False
@@ -276,7 +283,7 @@ class TestDBConnectionServiceRetry:
             assert mock_sleep.call_count == 1  # Only one retry
 
     @pytest.mark.asyncio
-    async def test_no_retry_on_ssl_error(self):
+    async def test_no_retry_on_ssl_error(self, db_service):
         """Test that SSL errors are not retried"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -287,7 +294,7 @@ class TestDBConnectionServiceRetry:
             
             mock_get_pool.side_effect = ssl_error
             
-            result = await DBConnectionService.test_connection(db_url)
+            result = await db_service.test_connection(db_url)
             
             # Should fail immediately without retry
             assert result.success is False
@@ -296,7 +303,7 @@ class TestDBConnectionServiceRetry:
             assert mock_sleep.call_count == 0  # No delays
 
     @pytest.mark.asyncio
-    async def test_no_retry_on_timeout_error(self):
+    async def test_no_retry_on_timeout_error(self, db_service):
         """Test that timeout errors are not retried"""
         db_url = "postgres://user:pass@localhost:5432/db"
         
@@ -307,7 +314,7 @@ class TestDBConnectionServiceRetry:
             
             mock_get_pool.side_effect = timeout_error
             
-            result = await DBConnectionService.test_connection(db_url)
+            result = await db_service.test_connection(db_url)
             
             # Should fail immediately without retry
             assert result.success is False

@@ -11,8 +11,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.db_connection_service import DBConnectionService
 import psycopg
 
+@pytest.fixture
+def db_service():
+    """Create a DBConnectionService instance with default dependencies."""
+    return DBConnectionService()
+
+
+
 @pytest.mark.asyncio
-async def test_service_sanitizes_error_logs():
+async def test_service_sanitizes_error_logs(db_service):
     """
     Verify that DBConnectionService sanitizes credentials in error logs
     when the underlying driver raises an exception containing the URL.
@@ -31,7 +38,7 @@ async def test_service_sanitizes_error_logs():
     error_msg = f"FATAL: password authentication failed for {url}"
     
     with patch('services.db_connection_service.pool_manager.get_pool', side_effect=psycopg.OperationalError(error_msg)):
-        result = await DBConnectionService.test_connection(url)
+        result = await db_service.test_connection(url)
         
         assert result.success is False
         
