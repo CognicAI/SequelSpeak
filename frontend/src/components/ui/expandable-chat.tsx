@@ -69,6 +69,7 @@ const ExpandableChat: FC<ExpandableChatProps> = ({
           size="icon"
           className="absolute top-2 right-2 sm:hidden"
           onClick={toggleChat}
+          aria-label="Close chat"
         >
           <X className="h-4 w-4" />
         </Button>
