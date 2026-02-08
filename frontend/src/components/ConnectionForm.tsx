@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
 import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { TestConnectionSuccessResponse, TestConnectionErrorResponse } from '../types/api';
@@ -127,7 +127,7 @@ export function ConnectionForm() {
     // AbortController ref for cancelling in-flight requests
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
 
         let connectionUrl = url;
