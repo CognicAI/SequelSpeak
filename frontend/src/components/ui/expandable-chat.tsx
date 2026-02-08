@@ -33,6 +33,7 @@ interface ExpandableChatProps extends HTMLAttributes<HTMLDivElement> {
   position?: ChatPosition;
   size?: ChatSize;
   icon?: ReactNode;
+  panelClassName?: string;
 }
 
 const ExpandableChat: FC<ExpandableChatProps> = ({

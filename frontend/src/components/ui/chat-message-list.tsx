@@ -1,6 +1,7 @@
-import { forwardRef, type HTMLAttributes } from "react";
+import { forwardRef, useCallback, type HTMLAttributes } from "react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useAutoScroll } from "@/components/hooks/use-auto-scroll";
 
 interface ChatMessageListProps extends HTMLAttributes<HTMLDivElement> {
@@ -8,7 +9,7 @@ interface ChatMessageListProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 const ChatMessageList = forwardRef<HTMLDivElement, ChatMessageListProps>(
-  ({ className, children, smooth = false, ...props }, _ref) => {
+  ({ className, children, smooth = false, ...props }, forwardedRef) => {
     const {
       scrollRef,
       isAtBottom,
@@ -19,11 +20,27 @@ const ChatMessageList = forwardRef<HTMLDivElement, ChatMessageListProps>(
       content: children,
     });
 
+    // Merge forwarded ref with internal scrollRef
+    const mergedRef = useCallback(
+      (node: HTMLDivElement | null) => {
+        // Assign to internal ref
+        (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        
+        // Forward to parent ref if provided
+        if (typeof forwardedRef === 'function') {
+          forwardedRef(node);
+        } else if (forwardedRef) {
+          forwardedRef.current = node;
+        }
+      },
+      [forwardedRef, scrollRef]
+    );
+
     return (
       <div className="relative w-full h-full">
         <div
-          className={`flex flex-col w-full h-full p-4 overflow-y-auto ${className}`}
-          ref={scrollRef}
+          className={cn("flex flex-col w-full h-full p-4 overflow-y-auto", className)}
+          ref={mergedRef}
           onWheel={disableAutoScroll}
           onTouchMove={disableAutoScroll}
           {...props}
