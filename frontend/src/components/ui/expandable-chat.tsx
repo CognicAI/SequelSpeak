@@ -123,24 +123,29 @@ const ExpandableChatToggle: FC<ExpandableChatToggleProps> = ({
   isOpen,
   toggleChat,
   ...props
-}) => (
-  <Button
-    variant="default"
-    onClick={toggleChat}
-    className={cn(
-      "w-14 h-14 rounded-full shadow-md flex items-center justify-center hover:shadow-lg hover:shadow-black/30 transition-all duration-300",
-      className,
-    )}
-    {...props}
-  >
-    {isOpen ? (
-      <X className="h-6 w-6" />
-    ) : (
-      icon || <MessageCircle className="h-6 w-6" />
-    )}
-  </Button>
-);
+}) => {
+  const label = isOpen ? "Close chat" : "Open chat";
 
+  return (
+    <Button
+      variant="default"
+      onClick={toggleChat}
+      className={cn(
+        "w-14 h-14 rounded-full shadow-md flex items-center justify-center hover:shadow-lg hover:shadow-black/30 transition-all duration-300",
+        className,
+      )}
+      aria-label={label}
+      aria-expanded={isOpen}
+      {...props}
+    >
+      {isOpen ? (
+        <X className="h-6 w-6" />
+      ) : (
+        icon || <MessageCircle className="h-6 w-6" />
+      )}
+    </Button>
+  );
+};
 ExpandableChatToggle.displayName = "ExpandableChatToggle";
 
 export {
