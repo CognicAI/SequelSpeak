@@ -46,7 +46,7 @@ const ExpandableChat: FC<ExpandableChatProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
 
-  const toggleChat = () => setIsOpen(!isOpen);
+  const toggleChat = () => setIsOpen((prev) => !prev);
 
   return (
     <div
