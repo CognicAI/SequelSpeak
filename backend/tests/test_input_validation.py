@@ -24,6 +24,13 @@ from utils.input_validator import (
 )
 
 
+@pytest.fixture
+def db_service():
+    """Create a DBConnectionService instance with default dependencies."""
+    from services.db_connection_service import DBConnectionService
+    return DBConnectionService()
+
+
 # ============================================================================
 # NULL BYTE DETECTION TESTS
 # ============================================================================
@@ -338,35 +345,31 @@ class TestSanitizeForLogging:
 class TestIntegrationWithConnectionService:
     """Integration tests verifying validation works with DBConnectionService."""
     
-    def test_connection_service_rejects_null_byte(self):
+    def test_connection_service_rejects_null_byte(self, db_service):
         """DBConnectionService should reject URLs with null bytes."""
-        from services.db_connection_service import DBConnectionService
         from schemas.errors import ErrorCode
         
-        result = DBConnectionService.parse_and_verify_url("postgres://user\x00:pass@host/db")
+        result = db_service.parse_and_verify_url("postgres://user\x00:pass@host/db")
         assert result.success is False
         assert result.error_code == ErrorCode.INVALID_URL
     
-    def test_connection_service_rejects_sql_injection(self):
+    def test_connection_service_rejects_sql_injection(self, db_service):
         """DBConnectionService should reject URLs with SQL injection patterns."""
-        from services.db_connection_service import DBConnectionService
         from schemas.errors import ErrorCode
         
-        result = DBConnectionService.parse_and_verify_url("postgres://user--:pass@host/db")
+        result = db_service.parse_and_verify_url("postgres://user--:pass@host/db")
         assert result.success is False
         assert result.error_code == ErrorCode.INVALID_URL
     
-    def test_connection_service_accepts_valid_url(self):
+    def test_connection_service_accepts_valid_url(self, db_service):
         """DBConnectionService should accept valid URLs."""
-        from services.db_connection_service import DBConnectionService
         
-        result = DBConnectionService.parse_and_verify_url("postgres://user:pass@localhost:5432/db")
+        result = db_service.parse_and_verify_url("postgres://user:pass@localhost:5432/db")
         assert result.success is True
     
-    def test_connection_service_accepts_complex_password(self):
+    def test_connection_service_accepts_complex_password(self, db_service):
         """DBConnectionService should accept valid URLs with encoded special chars."""
-        from services.db_connection_service import DBConnectionService
         
         # Password with encoded special chars: p@ss#word!
-        result = DBConnectionService.parse_and_verify_url("postgres://user:p%40ss%23word%21@localhost:5432/db")
+        result = db_service.parse_and_verify_url("postgres://user:p%40ss%23word%21@localhost:5432/db")
         assert result.success is True

@@ -1,9 +1,15 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, status, Request
 from schemas.connection import ConnectionRequest, ConnectionTestResponse, ConnectionErrorDetail
 from services.db_connection_service import DBConnectionService
 from exceptions import DatabaseConnectionError
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from config import settings
 
 router = APIRouter()
+
+# Initialize limiter for this router
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post(
@@ -47,12 +53,15 @@ This endpoint performs a lightweight connection check without fetching any datab
     operation_id="test_database_connection",
     tags=["Connection"]
 )
-async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
+# Note: Rate limiting is applied but tests use RATE_LIMIT_ENABLED=False
+@limiter.limit(f"{settings.rate_limit_per_minute}/minute" if settings.rate_limit_enabled else "1000000/minute")
+async def test_connection(request: Request, body: ConnectionRequest) -> ConnectionTestResponse:
     """
     Test the validity and reachability of a PostgreSQL connection URL.
     
     Args:
-        request: ConnectionRequest containing the PostgreSQL connection URL
+        request: FastAPI Request object (required by rate limiter)
+        body: ConnectionRequest containing the PostgreSQL connection URL
         
     Returns:
         ConnectionTestResponse with status and message on success
@@ -60,16 +69,19 @@ async def test_connection(request: ConnectionRequest) -> ConnectionTestResponse:
     Raises:
         HTTPException: 400 error if URL validation fails or connection cannot be established
     """
+    # Initialize service with default dependencies (production configuration)
+    db_service = DBConnectionService()
+    
     # 1. Structural Validation
-    validation_result = DBConnectionService.parse_and_verify_url(request.connection_url)
+    validation_result = db_service.parse_and_verify_url(body.connection_url)
     if not validation_result.success:
         raise DatabaseConnectionError(
             detail=validation_result.message,
             error_code=validation_result.error_code
         )
 
-    # 2. Connection Test
-    connection_result = DBConnectionService.test_connection(request.connection_url)
+    # 2. Connection Test (one-shot, no pooling)
+    connection_result = await db_service.test_connection_oneshot(body.connection_url)
     
     if connection_result.success:
         return ConnectionTestResponse(

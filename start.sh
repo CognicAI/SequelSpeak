@@ -22,9 +22,9 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # Check backend venv exists
-if [ ! -d "backend/venv" ]; then
-    echo -e "${RED}Error: backend/venv not found.${NC}"
-    echo -e "${YELLOW}Run: cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt${NC}"
+if [ ! -d ".venv" ]; then
+    echo -e "${RED}Error: .venv not found.${NC}"
+    echo -e "${YELLOW}Run: python3 -m venv .venv && source .venv/bin/activate && pip install -r backend/requirements.txt${NC}"
     exit 1
 fi
 
@@ -37,14 +37,20 @@ fi
 
 # Start backend
 echo -e "${GREEN}[Backend]${NC} Starting FastAPI server..."
+source .venv/bin/activate
 cd backend
-source venv/bin/activate
-uvicorn main:app --reload --port 8000 --host 0.0.0.0&
+uvicorn main:app --reload --port 8000 --host 0.0.0.0 &
 BACKEND_PID=$!
 cd ..
 
 # Wait a moment for backend to initialize
 sleep 2
+
+# Verify backend started successfully
+if ! kill -0 $BACKEND_PID 2>/dev/null; then
+    echo -e "${RED}Error: Backend failed to start${NC}"
+    exit 1
+fi
 
 # Check frontend dependencies
 if [ ! -d "frontend/node_modules" ]; then
@@ -65,6 +71,13 @@ cd frontend
 npm run dev &
 FRONTEND_PID=$!
 cd ..
+
+# Verify frontend started successfully
+if ! kill -0 $FRONTEND_PID 2>/dev/null; then
+    echo -e "${RED}Error: Frontend failed to start${NC}"
+    kill $BACKEND_PID 2>/dev/null
+    exit 1
+fi
 
 # Display status
 echo -e "\n${GREEN}✓${NC} SequelSpeak is running!"

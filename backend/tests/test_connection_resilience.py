@@ -22,9 +22,21 @@ from utils.connection_resilience import (
     is_connection_lost_error,
     detect_connection_failure,
     ConnectionHealthMonitor,
-    CONNECTION_LOST_PATTERNS,
 )
+from utils.patterns import PatternMatcher, PatternCategory
 from schemas.errors import ErrorCode, ConnectionResult
+
+
+@pytest.fixture(autouse=True)
+def reset_health_monitor():
+    """Reset health monitor state before each test to prevent state leakage."""
+    from utils.connection_resilience import health_monitor
+    health_monitor._state = ConnectionState.UNKNOWN
+    health_monitor._consecutive_failures = 0
+    yield
+    # Cleanup after test
+    health_monitor._state = ConnectionState.UNKNOWN
+    health_monitor._consecutive_failures = 0
 
 
 # ============================================================================
@@ -229,87 +241,234 @@ class TestDetectConnectionFailureDecorator:
 class TestConnectionHealthMonitor:
     """Tests for the ConnectionHealthMonitor class."""
 
-    def test_initial_state_is_unknown(self):
+    @pytest.mark.asyncio
+    async def test_initial_state_is_unknown(self):
         """Test that initial state is UNKNOWN."""
         monitor = ConnectionHealthMonitor()
-        assert monitor.state == ConnectionState.UNKNOWN
+        assert await monitor.get_state() == ConnectionState.UNKNOWN
 
-    def test_initial_consecutive_failures_is_zero(self):
+    @pytest.mark.asyncio
+    async def test_initial_consecutive_failures_is_zero(self):
         """Test that initial consecutive failures count is 0."""
         monitor = ConnectionHealthMonitor()
-        assert monitor.consecutive_failures == 0
+        assert await monitor.get_consecutive_failures() == 0
 
-    def test_mark_healthy_sets_connected_state(self):
+    @pytest.mark.asyncio
+    async def test_mark_healthy_sets_connected_state(self):
         """Test that mark_healthy sets state to CONNECTED."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_healthy()
-        assert monitor.state == ConnectionState.CONNECTED
-        assert monitor.is_healthy is True
+        await monitor.mark_healthy()
+        assert await monitor.get_state() == ConnectionState.CONNECTED
+        assert await monitor.is_healthy() is True
 
-    def test_mark_healthy_resets_failure_count(self):
+    @pytest.mark.asyncio
+    async def test_mark_healthy_resets_failure_count(self):
         """Test that mark_healthy resets consecutive failures."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_unhealthy()
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 2
+        await monitor.mark_unhealthy()
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 2
         
-        monitor.mark_healthy()
-        assert monitor.consecutive_failures == 0
+        await monitor.mark_healthy()
+        assert await monitor.get_consecutive_failures() == 0
 
-    def test_mark_unhealthy_sets_disconnected_state(self):
+    @pytest.mark.asyncio
+    async def test_mark_unhealthy_sets_disconnected_state(self):
         """Test that mark_unhealthy sets state to DISCONNECTED."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_unhealthy()
-        assert monitor.state == ConnectionState.DISCONNECTED
-        assert monitor.is_healthy is False
+        await monitor.mark_unhealthy()
+        assert await monitor.get_state() == ConnectionState.DISCONNECTED
+        assert await monitor.is_healthy() is False
 
-    def test_mark_unhealthy_increments_failure_count(self):
+    @pytest.mark.asyncio
+    async def test_mark_unhealthy_increments_failure_count(self):
         """Test that mark_unhealthy increments consecutive failures."""
         monitor = ConnectionHealthMonitor()
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 1
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 2
-        monitor.mark_unhealthy()
-        assert monitor.consecutive_failures == 3
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 1
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 2
+        await monitor.mark_unhealthy()
+        assert await monitor.get_consecutive_failures() == 3
 
-    def test_check_connection_success(self):
+    @pytest.mark.asyncio
+    async def test_check_connection_success(self):
         """Test check_connection with successful connection."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
         monitor = ConnectionHealthMonitor()
         
-        with patch('psycopg.connect') as mock_connect:
-            mock_conn = MagicMock()
-            mock_cursor = MagicMock()
-            mock_connect.return_value.__enter__.return_value = mock_conn
-            mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-            mock_cursor.fetchone.return_value = (1,)
-
-            result = monitor.check_connection("postgres://user:pass@localhost:5432/db")
+        # Create async mocks for pool-based connection
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        mock_cursor.fetchone = AsyncMock(return_value=(1,))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is True
-            assert monitor.state == ConnectionState.CONNECTED
-            assert monitor.is_healthy is True
+            assert await monitor.get_state() == ConnectionState.CONNECTED
+            assert await monitor.is_healthy() is True
 
-    def test_check_connection_failure(self):
+    @pytest.mark.asyncio
+    async def test_check_connection_failure(self):
         """Test check_connection with connection failure."""
         monitor = ConnectionHealthMonitor()
         
-        with patch('psycopg.connect', side_effect=psycopg.OperationalError("connection refused")):
-            result = monitor.check_connection("postgres://user:pass@localhost:5432/db")
+        with patch('services.connection_pool.pool_manager.get_pool', side_effect=psycopg.OperationalError("connection refused")):
+            result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is False
-            assert monitor.state == ConnectionState.DISCONNECTED
-            assert monitor.is_healthy is False
+            assert await monitor.get_state() == ConnectionState.DISCONNECTED
+            assert await monitor.is_healthy() is False
 
-    def test_check_connection_detects_connection_lost(self):
+    @pytest.mark.asyncio
+    async def test_check_connection_detects_connection_lost(self):
         """Test that check_connection detects connection lost errors."""
         monitor = ConnectionHealthMonitor()
         
-        with patch('psycopg.connect', side_effect=psycopg.OperationalError("server closed the connection unexpectedly")):
-            result = monitor.check_connection("postgres://user:pass@localhost:5432/db")
+        with patch('services.connection_pool.pool_manager.get_pool', side_effect=psycopg.OperationalError("server closed the connection unexpectedly")):
+            result = await monitor.check_connection("postgres://user:pass@localhost:5432/db")
             
             assert result.success is False
             assert result.error_code == ErrorCode.CONNECTION_LOST
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_retries_on_transient_failure(self):
+        """Test that health check retries once on transient connection failure."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        # Create async mocks
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # First call: connection lost error
+        # Second call: success
+        call_count = [0]
+        
+        async def mock_execute(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise psycopg.OperationalError("connection closed")
+            # Second call succeeds
+            return None
+        
+        mock_cursor.execute = mock_execute
+        mock_cursor.fetchone = AsyncMock(return_value=(1,))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is True
+        assert result.message == "Connection is healthy"
+        # Verify execute was called twice (initial + 1 retry)
+        assert call_count[0] == 2
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_fails_after_max_retries(self):
+        """Test that health check fails after exhausting retries."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        # Mock to fail consistently with connection lost error
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # Always fail with connection lost
+        mock_cursor.execute = AsyncMock(side_effect=psycopg.OperationalError("connection closed"))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is False
+        assert result.error_code == ErrorCode.CONNECTION_LOST
+        # Verify execute was called twice (initial + 1 retry)
+        assert mock_cursor.execute.call_count == 2
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_no_retry_on_non_transient_error(self):
+        """Test that health check does not retry on non-transient errors."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # SSL error (non-retryable)
+        mock_cursor.execute = AsyncMock(side_effect=psycopg.OperationalError("SSL error: certificate verify failed"))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is False
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
+        # Verify execute was called only once (no retry)
+        assert mock_cursor.execute.call_count == 1
+    
+    @pytest.mark.asyncio
+    async def test_check_connection_no_retry_on_auth_failure(self):
+        """Test that health check does not retry on authentication failures."""
+        from unittest.mock import AsyncMock
+        from psycopg_pool import AsyncConnectionPool
+        
+        monitor = ConnectionHealthMonitor()
+        
+        mock_pool = AsyncMock(spec=AsyncConnectionPool)
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        
+        # Auth error (non-retryable)
+        mock_cursor.execute = AsyncMock(side_effect=psycopg.OperationalError("password authentication failed"))
+        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_cursor.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.cursor = MagicMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=None)
+        mock_pool.connection = MagicMock(return_value=mock_conn)
+        
+        with patch('services.connection_pool.pool_manager.get_pool', return_value=mock_pool):
+            result = await monitor.check_connection("postgres://test@localhost/db")
+        
+        assert result.success is False
+        assert result.error_code == ErrorCode.CONNECTION_ERROR
+        # Verify execute was called only once (no retry)
+        assert mock_cursor.execute.call_count == 1
 
 
 # ============================================================================
@@ -366,7 +525,7 @@ class TestCredentialSafety:
 class TestConnectionLostPatterns:
     """Tests for all defined connection lost patterns."""
 
-    @pytest.mark.parametrize("pattern", CONNECTION_LOST_PATTERNS)
+    @pytest.mark.parametrize("pattern", PatternMatcher.get_patterns(PatternCategory.CONNECTION_LOST))
     def test_all_patterns_detected(self, pattern):
         """Test that all defined patterns are detected as connection lost."""
         error = psycopg.OperationalError(f"Database error: {pattern}")

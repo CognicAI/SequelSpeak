@@ -29,6 +29,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
 
 # Environment Variables
 .env
@@ -101,3 +102,6 @@ Thumbs.db
 .DS_Store
 Thumbs.db
 temp/
+
+#Copilot
+.github/

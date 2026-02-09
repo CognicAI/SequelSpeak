@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator, ValidationError
 from pathlib import Path
@@ -25,18 +26,45 @@ class Settings(BaseSettings):
     
     # Application Settings
     app_name: str = "SequelSpeak Backend"
-    environment: str = "development"
+    environment: str 
     
     # Security Settings
     secret_key: Optional[str] = None  # Required in production for session/JWT
-    allowed_origins: str = "*"  # Comma-separated CORS origins
+    allowed_origins: str  # Comma-separated CORS origins
     
     # Database Settings
     db_connection_timeout: int = 10  # Database connection timeout in seconds
     
+    # Connection Pool Settings
+    db_pool_min_size: int = 1  # Minimum number of connections in pool
+    db_pool_max_size: int = 5  # Maximum number of connections in pool
+    db_pool_timeout: int = 30  # Pool connection timeout in seconds
+    db_pool_max_idle: Optional[int] = None  # Maximum idle time for connections (seconds)
+    
     # Health Check Settings
     health_check_timeout: int = 2  # Health check timeout in seconds (keep low for fast response)
     health_check_db_url: Optional[str] = None  # Default database URL for health checks
+    
+    # Retry Settings
+    connection_retry_max: int = 2  # Maximum retries for user connection tests
+    connection_retry_initial_delay: float = 1.0  # Initial retry delay in seconds (exponential backoff)
+    health_check_retry_max: int = 1  # Maximum retries for health checks (keep low for fast response)
+    
+    # Rate Limiting Settings
+    rate_limit_enabled: bool = True  # Enable rate limiting for API endpoints
+    rate_limit_per_minute: int = 10  # Maximum requests per minute per IP for test-connection endpoint
+    rate_limit_burst: int = 3  # Allow short bursts of this many requests
+    
+    # Circuit Breaker Settings
+    circuit_breaker_enabled: bool = True  # Enable circuit breaker for database connections
+    circuit_breaker_failure_threshold: int = 5  # Number of consecutive failures before opening circuit
+    circuit_breaker_timeout: int = 60  # Seconds to wait before trying again after circuit opens
+
+    model_config = ConfigDict(
+        env_file=".env" if os.getenv("ENVIRONMENT") != "production" else None,
+        env_file_encoding='utf-8',
+        extra='forbid'
+    )
     
     @field_validator('environment')
     @classmethod
@@ -47,10 +75,37 @@ class Settings(BaseSettings):
             raise ValueError(f"environment must be one of {allowed}, got: {v}")
         return v
     
+    @field_validator('allowed_origins')
+    @classmethod
+    def validate_cors_origins(cls, v: str, info) -> str:
+        """Validate CORS configuration based on environment."""
+        environment = info.data.get('environment', 'development')
+        
+        if environment == "production" and v == "*":
+            raise ValueError(
+                "Wildcard CORS origins (*) are not allowed in production. "
+                "Please specify explicit origins."
+            )
+        
+        # Validate individual origins if not wildcard
+        if v != "*":
+            origins = [o.strip() for o in v.split(',') if o.strip()]
+            for origin in origins:
+                if not origin.startswith(('http://', 'https://')):
+                    raise ValueError(
+                        f"Invalid origin '{origin}'. Must start with http:// or https://"
+                    )
+        
+        return v
+    
     @field_validator('secret_key')
     @classmethod
     def validate_secret_key(cls, v: Optional[str], info) -> Optional[str]:
         """Ensure secret_key is set in production."""
+        # Convert empty string to None for consistency
+        if v == '':
+            v = None
+        
         # Access environment from ValidationInfo context
         environment = info.data.get('environment', 'development')
         
@@ -84,6 +139,36 @@ class Settings(BaseSettings):
             )
         return v
     
+    @field_validator('db_pool_min_size')
+    @classmethod
+    def validate_pool_min_size(cls, v: int) -> int:
+        """Ensure pool min size is positive."""
+        if v < 0:
+            raise ValueError(f"db_pool_min_size must be non-negative, got: {v}")
+        return v
+    
+    @field_validator('db_pool_max_size')
+    @classmethod
+    def validate_pool_max_size(cls, v: int) -> int:
+        """Ensure pool max size is positive and reasonable."""
+        if v <= 0:
+            raise ValueError(f"db_pool_max_size must be positive, got: {v}")
+        if v > 50:
+            print(
+                f"WARNING: db_pool_max_size is very high ({v}). "
+                f"This may exhaust PostgreSQL max_connections. Consider reducing.",
+                file=sys.stderr
+            )
+        return v
+    
+    @field_validator('db_pool_timeout')
+    @classmethod
+    def validate_pool_timeout(cls, v: int) -> int:
+        """Ensure pool timeout is positive."""
+        if v <= 0:
+            raise ValueError(f"db_pool_timeout must be positive, got: {v}")
+        return v
+    
     @field_validator('health_check_timeout')
     @classmethod
     def validate_health_check_timeout(cls, v: int) -> int:
@@ -98,6 +183,48 @@ class Settings(BaseSettings):
             )
             # Cap at 10 seconds to prevent long hangs
             return 10
+        return v
+    
+    @field_validator('connection_retry_max')
+    @classmethod
+    def validate_connection_retry_max(cls, v: int) -> int:
+        """Ensure connection retry max is non-negative and reasonable."""
+        if v < 0:
+            raise ValueError(f"connection_retry_max must be non-negative, got: {v}")
+        if v > 5:
+            print(
+                f"WARNING: connection_retry_max is very high ({v}). "
+                f"Consider keeping under 5 to avoid long wait times.",
+                file=sys.stderr
+            )
+        return v
+    
+    @field_validator('health_check_retry_max')
+    @classmethod
+    def validate_health_check_retry_max(cls, v: int) -> int:
+        """Ensure health check retry max is non-negative and low for fast response."""
+        if v < 0:
+            raise ValueError(f"health_check_retry_max must be non-negative, got: {v}")
+        if v > 2:
+            print(
+                f"WARNING: health_check_retry_max is high ({v}). "
+                f"Consider keeping at 1-2 for fast health check responses.",
+                file=sys.stderr
+            )
+        return v
+    
+    @field_validator('connection_retry_initial_delay')
+    @classmethod
+    def validate_connection_retry_initial_delay(cls, v: float) -> float:
+        """Ensure initial retry delay is positive."""
+        if v <= 0:
+            raise ValueError(f"connection_retry_initial_delay must be positive, got: {v}")
+        if v > 5.0:
+            print(
+                f"WARNING: connection_retry_initial_delay is very high ({v}s). "
+                f"Consider keeping under 5s for responsive retries.",
+                file=sys.stderr
+            )
         return v
     
     def get_allowed_origins_list(self) -> List[str]:

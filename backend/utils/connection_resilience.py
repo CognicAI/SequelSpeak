@@ -6,16 +6,17 @@ errors correctly without crashing the application.
 """
 
 import logging
-import threading
+import asyncio
 import time
 from enum import Enum
 from functools import wraps
-from typing import Callable, Optional, Any, TypeVar, cast
+from typing import Callable, TypeVar, Optional
 
 import psycopg
 
 from schemas.errors import ErrorCode, ConnectionResult
 from utils.security import mask_connection_url
+from utils.patterns import PatternMatcher, PatternCategory
 
 T = TypeVar("T")
 
@@ -29,25 +30,6 @@ class ConnectionState(str, Enum):
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     UNKNOWN = "unknown"
-
-
-# Patterns that indicate a dropped/lost connection (runtime failure)
-# These are distinct from initial connection failures (host unreachable, auth failed, etc.)
-CONNECTION_LOST_PATTERNS = [
-    "connection closed",
-    "server closed the connection unexpectedly",
-    "connection reset",
-    "broken pipe",
-    "connection terminated",
-    "connection already closed",
-    "connection is closed",
-    "connection has been closed",
-    "connection was closed",
-    "lost connection",
-    "server has gone away",
-    "connection timed out during operation",
-    "connection dropped",
-]
 
 
 def is_connection_lost_error(exception: Exception) -> bool:
@@ -78,18 +60,17 @@ def is_connection_lost_error(exception: Exception) -> bool:
     if isinstance(exception, psycopg.OperationalError):
         error_msg = str(exception).lower()
         
-        # Explicitly exclude SSL/TLS errors - these indicate configuration issues
+        # Priority 1: Explicitly exclude SSL/TLS errors - these indicate configuration issues
         # and should not be retried
-        ssl_patterns = [
-            "ssl error", "ssl connection", "ssl handshake", "ssl syscall",
-            "certificate verify", "certificate validation", "certificate_verify_failed",
-            "tlsv1", "ssl_error", "certificate expired", "certificate invalid",
-            "self-signed certificate"
-        ]
-        if any(pattern in error_msg for pattern in ssl_patterns):
+        if PatternMatcher.matches(error_msg, PatternCategory.SSL_ERROR):
             return False
         
-        # Explicitly exclude timeout errors - these indicate network/performance issues
+        # Priority 2: Check for SSL SYSCALL and host unreachable patterns
+        # These are network-level failures, not runtime connection drops
+        if PatternMatcher.matches(error_msg, PatternCategory.HOST_UNREACHABLE):
+            return False
+        
+        # Priority 3: Explicitly exclude timeout errors - these indicate network/performance issues
         # that won't resolve with immediate retry
         # However, "connection timed out during operation" indicates a dropped connection
         # and should be retryable
@@ -99,8 +80,9 @@ def is_connection_lost_error(exception: Exception) -> bool:
         if "timed out" in error_msg and "during operation" not in error_msg:
             return False
         
-        # Check for connection lost patterns
-        if any(pattern in error_msg for pattern in CONNECTION_LOST_PATTERNS):
+        # Priority 4: Check for connection lost patterns using centralized pattern matching
+        # These are runtime connection drops that may be transient
+        if PatternMatcher.matches(error_msg, PatternCategory.CONNECTION_LOST):
             return True
     
     # Check for generic socket/connection errors
@@ -187,112 +169,248 @@ def detect_connection_failure(func: Callable) -> Callable:
 
 class ConnectionHealthMonitor:
     """
-    Monitors and tracks the health state of a database connection.
+    Monitors and tracks the health state of a database connection with timestamp tracking.
     
-    This class is thread-safe and safe for concurrent FastAPI workers/threads.
+    This class is async-safe and designed for concurrent async operations.
     It provides methods to check connection health and track state changes 
     for use by health check endpoints or reconnection logic.
     
+    Health checks retry once on transient connection failures (CONNECTION_LOST)
+    to reduce false negatives from brief network glitches, while maintaining
+    fast response times for monitoring (no backoff delay).
+    
+    Timestamp Tracking:
+    - Tracks when the last health check was performed
+    - Records when the connection first became unhealthy
+    - Records when the connection was last healthy
+    - Provides methods to calculate downtime duration
+    
     Attributes:
         state: Current connection state (CONNECTED, DISCONNECTED, UNKNOWN)
-        last_check_time: Timestamp of last health check
+        last_check_time: Unix timestamp of last health check attempt (None if never checked)
+        last_healthy_time: Unix timestamp of last successful connection (None if never connected)
+        first_failure_time: Unix timestamp when connection first failed (None if currently healthy)
         consecutive_failures: Number of consecutive connection failures
     """
     
     def __init__(self):
-        """Initialize the health monitor with unknown state."""
+        """Initialize the health monitor with unknown state and no timestamp history.
+        
+        Note: The asyncio.Lock is lazily initialized on first use to avoid requiring
+        an event loop at instantiation time. This allows the singleton instance to be
+        created at module import time.
+        """
         self._state: ConnectionState = ConnectionState.UNKNOWN
         self._consecutive_failures: int = 0
-        self._lock = threading.RLock()
+        self._last_check_time: Optional[float] = None
+        self._last_healthy_time: Optional[float] = None
+        self._first_failure_time: Optional[float] = None
+        self._lock: Optional[asyncio.Lock] = None
     
-    @property
-    def state(self) -> ConnectionState:
+    def _ensure_lock(self) -> asyncio.Lock:
+        """Lazily initialize the asyncio.Lock on first use.
+        
+        This ensures the lock is only created when an event loop is available,
+        preventing errors when the class is instantiated at module import time.
+        
+        Returns:
+            The asyncio.Lock instance
+        """
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+    
+    async def get_state(self) -> ConnectionState:
         """Get the current connection state."""
-        with self._lock:
+        async with self._ensure_lock():
             return self._state
     
-    @property
-    def is_healthy(self) -> bool:
+    async def is_healthy(self) -> bool:
         """Check if the connection is currently healthy."""
-        with self._lock:
+        async with self._ensure_lock():
             return self._state == ConnectionState.CONNECTED
     
-    @property
-    def consecutive_failures(self) -> int:
+    async def get_consecutive_failures(self) -> int:
         """Get the number of consecutive connection failures."""
-        with self._lock:
+        async with self._ensure_lock():
             return self._consecutive_failures
     
-    def mark_healthy(self) -> None:
-        """Mark the connection as healthy and reset failure count."""
-        with self._lock:
+    async def get_last_check_time(self) -> Optional[float]:
+        """Get the Unix timestamp of the last health check attempt.
+        
+        Returns:
+            Unix timestamp (seconds since epoch) or None if no check has been performed
+        """
+        async with self._ensure_lock():
+            return self._last_check_time
+    
+    async def get_last_healthy_time(self) -> Optional[float]:
+        """Get the Unix timestamp of the last successful connection.
+        
+        Returns:
+            Unix timestamp (seconds since epoch) or None if connection was never healthy
+        """
+        async with self._ensure_lock():
+            return self._last_healthy_time
+    
+    async def get_first_failure_time(self) -> Optional[float]:
+        """Get the Unix timestamp when the connection first failed.
+        
+        Returns:
+            Unix timestamp (seconds since epoch) or None if connection is currently healthy
+        """
+        async with self._ensure_lock():
+            return self._first_failure_time
+    
+    async def get_downtime_duration(self) -> Optional[float]:
+        """Calculate how long the connection has been unhealthy.
+        
+        Returns:
+            Duration in seconds, or None if connection is healthy or never failed
+        """
+        async with self._ensure_lock():
+            if self._first_failure_time is None:
+                return None
+            return time.time() - self._first_failure_time
+    
+    async def get_time_since_last_check(self) -> Optional[float]:
+        """Calculate how long since the last health check.
+        
+        Returns:
+            Duration in seconds, or None if no check has been performed
+        """
+        async with self._ensure_lock():
+            if self._last_check_time is None:
+                return None
+            return time.time() - self._last_check_time
+    
+    async def get_time_since_last_healthy(self) -> Optional[float]:
+        """Calculate how long since the connection was last healthy.
+        
+        Returns:
+            Duration in seconds, or None if connection was never healthy
+        """
+        async with self._ensure_lock():
+            if self._last_healthy_time is None:
+                return None
+            return time.time() - self._last_healthy_time
+    
+    async def mark_healthy(self) -> None:
+        """Mark the connection as healthy, reset failure count, and update timestamps."""
+        current_time = time.time()
+        async with self._ensure_lock():
             self._state = ConnectionState.CONNECTED
             self._consecutive_failures = 0
+            self._last_healthy_time = current_time
+            self._first_failure_time = None  # Clear failure timestamp when recovering
         logger.debug("Connection marked as healthy")
     
-    def mark_unhealthy(self) -> None:
-        """Mark the connection as unhealthy and increment failure count."""
-        with self._lock:
+    async def mark_unhealthy(self) -> None:
+        """Mark the connection as unhealthy, increment failure count, and update timestamps."""
+        current_time = time.time()
+        async with self._ensure_lock():
             self._state = ConnectionState.DISCONNECTED
             self._consecutive_failures += 1
+            # Only set first_failure_time on the initial failure
+            if self._first_failure_time is None:
+                self._first_failure_time = current_time
             failures = self._consecutive_failures
         logger.warning(f"Connection marked as unhealthy (consecutive failures: {failures})")
     
-    def check_connection(self, url: str, timeout: int = 5) -> ConnectionResult:
+    async def check_connection(self, url: str, timeout: int = 5, max_retries: int = None) -> ConnectionResult:
         """
-        Perform a lightweight connection check.
+        Perform a lightweight async connection check using connection pool.
+        
+        Retries once on transient connection failures to reduce false negatives
+        from brief network glitches, while keeping response time fast for monitoring.
         
         Args:
             url: Database connection URL
-            timeout: Connection timeout in seconds
+            timeout: Connection timeout in seconds (default: 5)
+            max_retries: Maximum retry attempts for transient failures
+                        (default: from settings.health_check_retry_max)
             
         Returns:
             ConnectionResult indicating success or failure
-        """
-        try:
-            with psycopg.connect(url, connect_timeout=timeout) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    result = cur.fetchone()
-                    if result == (1,):
-                        self.mark_healthy()
-                        return ConnectionResult(
-                            success=True,
-                            message="Connection is healthy"
-                        )
-                    else:
-                        self.mark_unhealthy()
-                        return ConnectionResult(
-                            success=False,
-                            message="Connection check failed",
-                            error_code=ErrorCode.CONNECTION_ERROR
-                        )
-        except psycopg.OperationalError as e:
-            secure_error_msg = mask_connection_url(str(e))
-            logger.error(f"Health check failed: {secure_error_msg}")
-            self.mark_unhealthy()
             
-            if is_connection_lost_error(e):
+        Note:
+            Unlike test_connection(), health checks use minimal retries (1 vs 2)
+            and no backoff delay to maintain fast monitoring response times.
+        """
+        # Import here to avoid circular dependency
+        from services.connection_pool import pool_manager
+        from config import settings
+        
+        # Use configured default if not specified
+        if max_retries is None:
+            max_retries = settings.health_check_retry_max
+        
+        # Record the check time
+        current_time = time.time()
+        async with self._ensure_lock():
+            self._last_check_time = current_time
+        
+        retries = 0
+        
+        while retries <= max_retries:
+            try:
+                pool = await pool_manager.get_pool(url, min_size=1, max_size=1, timeout=timeout)
+                
+                async with pool.connection() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT 1")
+                        result = await cur.fetchone()
+                        if result == (1,):
+                            await self.mark_healthy()
+                            return ConnectionResult(
+                                success=True,
+                                message="Connection is healthy"
+                            )
+                        else:
+                            await self.mark_unhealthy()
+                            return ConnectionResult(
+                                success=False,
+                                message="Connection check failed",
+                                error_code=ErrorCode.CONNECTION_ERROR
+                            )
+            except psycopg.OperationalError as e:
+                secure_error_msg = mask_connection_url(str(e))
+                logger.error(f"Health check failed: {secure_error_msg}")
+                
+                # Check if this is a transient connection lost error
+                if is_connection_lost_error(e) and retries < max_retries:
+                    retries += 1
+                    logger.warning(
+                        f"Health check connection lost. Retrying immediately... "
+                        f"(Attempt {retries}/{max_retries})"
+                    )
+                    # No delay - immediate retry for fast recovery detection
+                    continue
+                
+                # If we're here, either not retryable or retries exhausted
+                await self.mark_unhealthy()
+                
+                if is_connection_lost_error(e):
+                    return ConnectionResult(
+                        success=False,
+                        message="Database connection was lost",
+                        error_code=ErrorCode.CONNECTION_LOST
+                    )
+                else:
+                    return ConnectionResult(
+                        success=False,
+                        message="Database connection failed",
+                        error_code=ErrorCode.CONNECTION_ERROR
+                    )
+            except Exception as e:
+                secure_error_msg = mask_connection_url(str(e))
+                logger.error(f"Health check error: {secure_error_msg}")
+                await self.mark_unhealthy()
                 return ConnectionResult(
                     success=False,
-                    message="Database connection was lost",
-                    error_code=ErrorCode.CONNECTION_LOST
-                )
-            else:
-                return ConnectionResult(
-                    success=False,
-                    message="Database connection failed",
+                    message="Connection check failed unexpectedly",
                     error_code=ErrorCode.CONNECTION_ERROR
                 )
-        except Exception as e:
-            secure_error_msg = mask_connection_url(str(e))
-            logger.error(f"Health check error: {secure_error_msg}")
-            self.mark_unhealthy()
-            return ConnectionResult(
-                success=False,
-                message="Connection check failed unexpectedly",
-                error_code=ErrorCode.CONNECTION_ERROR
-            )
 
 
 # Singleton health monitor instance for application-wide use
