@@ -164,7 +164,6 @@ export function ConnectionForm() {
                     type: 'error',
                     text: 'Authentication failed. Please sign in again.'
                 });
-                setIsLoading(false);
                 return;
             }
 
