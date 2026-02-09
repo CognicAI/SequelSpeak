@@ -5,7 +5,7 @@ Provides FastAPI dependency for verifying Clerk JWT tokens and extracting user c
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from clerk_backend_api import authenticate_request
@@ -15,12 +15,12 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 # HTTP Bearer token security scheme
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def verify_clerk_token(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> Dict[str, Any]:
     """
     Verify Clerk JWT token and extract user claims.
@@ -61,6 +61,14 @@ async def verify_clerk_token(
         )
     
     # Extract token from Bearer scheme
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        logger.warning("Authentication failed: Missing or invalid authorization scheme")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please provide a valid access token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     token = credentials.credentials
     
     if not token:
