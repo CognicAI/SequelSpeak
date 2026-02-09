@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
 import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
+import { useAuth } from '@clerk/clerk-react';
 import { cn } from '../lib/utils';
 import type { TestConnectionSuccessResponse, TestConnectionErrorResponse } from '../types/api';
 import { getErrorMessage } from '../types/api';
@@ -12,6 +13,7 @@ import { saveProfile } from '../services/profileStorage';
 type ConnectionMode = 'url' | 'fields';
 
 export function ConnectionForm() {
+    const { getToken } = useAuth();  // Get Clerk authentication hook
     const [mode, setMode] = useState<ConnectionMode>('url');
     const [url, setUrl] = useState('');
 
@@ -153,11 +155,24 @@ export function ConnectionForm() {
         setStatusMessage(null);
 
         try {
+            // Get JWT token from Clerk
+            const token = await getToken();
+            
+            if (!token) {
+                // This shouldn't happen if user is signed in, but handle gracefully
+                setStatusMessage({
+                    type: 'error',
+                    text: 'Authentication failed. Please sign in again.'
+                });
+                return;
+            }
+
             const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
             const response = await fetch(`${API_BASE_URL}/api/v1/utils/test-connection`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,  // Add JWT token
                 },
                 body: JSON.stringify({ connection_url: connectionUrl }),
                 signal: abortControllerRef.current.signal,
@@ -201,10 +216,18 @@ export function ConnectionForm() {
                     wasDisconnectedRef.current = true;
                 }
 
-                setStatusMessage({
-                    type: 'error',
-                    text: getErrorMessage(errorData.detail)
-                });
+                // Handle 401 authentication errors specifically
+                if (response.status === 401) {
+                    setStatusMessage({
+                        type: 'error',
+                        text: 'Your session has expired. Please sign in again.'
+                    });
+                } else {
+                    setStatusMessage({
+                        type: 'error',
+                        text: getErrorMessage(errorData.detail)
+                    });
+                }
             }
         } catch (err) {
             // Don't show error if request was aborted (user cancelled)

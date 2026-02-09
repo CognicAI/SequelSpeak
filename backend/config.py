@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     circuit_breaker_enabled: bool = True  # Enable circuit breaker for database connections
     circuit_breaker_failure_threshold: int = 5  # Number of consecutive failures before opening circuit
     circuit_breaker_timeout: int = 60  # Seconds to wait before trying again after circuit opens
+    
+    # Authentication Settings (Clerk)
+    clerk_secret_key: Optional[str] = None  # Required for JWT verification
+    clerk_publishable_key: Optional[str] = None  # Optional, for reference/debugging
 
     model_config = ConfigDict(
         env_file=".env" if os.getenv("ENVIRONMENT") != "production" else None,
