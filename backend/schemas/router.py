@@ -102,7 +102,7 @@ class RouterRequest(BaseModel):
     )
     
     user_context: Optional[UserContext] = Field(
-        default_factory=lambda: UserContext(),
+        default_factory=UserContext,
         description="Optional user and session metadata for tracking"
     )
     
