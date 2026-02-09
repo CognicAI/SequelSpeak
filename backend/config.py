@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     # Authentication Settings (Clerk)
     clerk_secret_key: Optional[str] = None  # Required for JWT verification
     clerk_publishable_key: Optional[str] = None  # Optional, for reference/debugging
+    
+    # Metrics Settings
+    metrics_enabled: bool = True  # Enable Prometheus metrics collection
+    app_version: str = "1.0.0"  # Application version for metrics labeling
 
     model_config = ConfigDict(
         env_file=".env" if os.getenv("ENVIRONMENT") != "production" else None,

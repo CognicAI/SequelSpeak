@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, status, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from api.v1 import connection, health, meta, query
@@ -14,6 +14,7 @@ from logging_config import setup_logging
 import uuid
 from contextvars import ContextVar
 import time
+import asyncio
 from typing import Callable, Awaitable, Any
 from services.connection_pool import pool_manager
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -35,6 +36,12 @@ limiter = Limiter(
 # Context variable for correlation ID (used by logging middleware)
 correlation_id_var: ContextVar[str] = ContextVar('correlation_id', default='')
 
+# Import Prometheus metrics if enabled
+if settings.metrics_enabled:
+    from utils import prometheus as prom_metrics
+else:
+    prom_metrics = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -47,8 +54,10 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     logger.info(f"App Name: {settings.app_name}")
     logger.info(f"Environment: {settings.environment}")
+    logger.info(f"App Version: {settings.app_version}")
     logger.info(f"DB Timeout: {settings.db_connection_timeout}s")
     logger.info(f"Pool Config: min={settings.db_pool_min_size}, max={settings.db_pool_max_size}, timeout={settings.db_pool_timeout}s")
+    logger.info(f"Metrics Enabled: {settings.metrics_enabled}")
     
     # Log CORS config (mask if production)
     origins = settings.get_allowed_origins_list()
@@ -62,17 +71,49 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Secret Key: not set (acceptable for development)")
     
+    # Initialize Prometheus metrics
+    if settings.metrics_enabled and prom_metrics:
+        prom_metrics.initialize_metrics()
+        logger.info("✓ Prometheus metrics initialized")
+    
     logger.info("=" * 60)
     logger.info("✓ Configuration validated successfully")
     logger.info("✓ Connection pool manager initialized")
     logger.info("=" * 60)
     
+    # Start background task to update connection pool metrics
+    metrics_task = None
+    if settings.metrics_enabled and prom_metrics:
+        async def update_pool_metrics_periodically():
+            """Background task to update connection pool metrics every 10 seconds."""
+            while True:
+                try:
+                    await asyncio.sleep(10)
+                    await prom_metrics.update_connection_pool_metrics()
+                except asyncio.CancelledError:
+                    logger.info("Metrics update task cancelled")
+                    break
+                except Exception as e:
+                    logger.warning(f"Error updating pool metrics: {e}")
+        
+        metrics_task = asyncio.create_task(update_pool_metrics_periodically())
+        logger.info("✓ Metrics background task started")
+    
     yield
     
-    # Shutdown: Close all connection pools gracefully
+    # Shutdown: Cancel metrics task and close all connection pools gracefully
     logger.info("=" * 60)
     logger.info("Shutting down SequelSpeak Backend")
     logger.info("=" * 60)
+    
+    if metrics_task:
+        metrics_task.cancel()
+        try:
+            await metrics_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("✓ Metrics task stopped")
+    
     await pool_manager.close_all()
     logger.info("✓ Shutdown complete")
     logger.info("=" * 60)
@@ -162,6 +203,7 @@ async def correlation_id_middleware(request: Request, call_next: Callable[[Reque
     - Added to response headers
     - Stored in context for logging
     - Used to trace related log entries
+    - Records Prometheus metrics
     """
     # Get or generate correlation ID
     correlation_id = request.headers.get('X-Correlation-ID', str(uuid.uuid4()))
@@ -190,6 +232,26 @@ async def correlation_id_middleware(request: Request, call_next: Callable[[Reque
         extra={'extra_fields': {'correlation_id': correlation_id, 'duration_seconds': duration}}
     )
     
+    # Record Prometheus metrics
+    if settings.metrics_enabled and prom_metrics:
+        try:
+            # Use path template to avoid high-cardinality labels
+            path_template = prom_metrics.extract_path_template(request.url.path)
+            
+            prom_metrics.http_requests_total.labels(
+                method=request.method,
+                endpoint=path_template,
+                status=str(response.status_code)
+            ).inc()
+            
+            prom_metrics.http_request_duration_seconds.labels(
+                method=request.method,
+                endpoint=path_template
+            ).observe(duration)
+        except Exception as e:
+            # Don't let metrics collection break the application
+            logger.warning(f"Failed to record metrics: {e}")
+    
     return response
 
 
@@ -208,6 +270,10 @@ async def database_connection_error_handler(request: Request, exc: DatabaseConne
     Returns:
         JSONResponse with structured error details
     """
+    # Track error in metrics
+    if settings.metrics_enabled and prom_metrics and exc.error_code:
+        prom_metrics.track_database_error(exc.error_code.value)
+    
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -361,3 +427,60 @@ app.include_router(query.router, prefix="/api/v1", tags=["Query"])
 @app.get("/")
 async def root():
     return {"status": "ok"}
+
+@app.get("/metrics", response_class=PlainTextResponse, tags=["Monitoring"], include_in_schema=True)
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Exposes application metrics in Prometheus text exposition format for scraping
+    by Prometheus or compatible monitoring systems.
+    
+    **Available Metrics:**
+    
+    - `sequelspeak_info`: Application information (version, environment, name)
+    - `http_requests_total`: Total HTTP requests (labels: method, endpoint, status)
+    - `http_request_duration_seconds`: HTTP request latency histogram (labels: method, endpoint)
+    - `http_requests_in_progress`: Currently processing HTTP requests (labels: method, endpoint)
+    - `active_database_connections`: Active database connections across all pools
+    - `database_connection_pools_total`: Total number of connection pools
+    - `database_errors_total`: Total database errors (labels: error_code)
+    
+    **Usage:**
+    
+    Configure Prometheus to scrape this endpoint:
+    ```yaml
+    scrape_configs:
+      - job_name: 'sequelspeak'
+        static_configs:
+          - targets: ['localhost:8000']
+    ```
+    
+    **Security:**
+    
+    This endpoint is unauthenticated by design for Prometheus scraping.
+    Use network-level security (firewall rules, VPC) to restrict access in production.
+    
+    Returns:
+        Prometheus metrics in text exposition format
+    """
+    if not settings.metrics_enabled or not prom_metrics:
+        return PlainTextResponse(
+            content="# Metrics disabled\n",
+            status_code=200,
+            media_type=prom_metrics.get_content_type() if prom_metrics else "text/plain"
+        )
+    
+    try:
+        return PlainTextResponse(
+            content=prom_metrics.get_metrics(),
+            status_code=200,
+            media_type=prom_metrics.get_content_type()
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate metrics: {e}")
+        return PlainTextResponse(
+            content=f"# Error generating metrics: {str(e)}\n",
+            status_code=500,
+            media_type="text/plain"
+        )
