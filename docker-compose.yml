@@ -1,0 +1,96 @@
+services:
+  # Backend Service - FastAPI
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sequelspeak-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Load from backend/.env file
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost,http://localhost:80}
+      - SECRET_KEY=${SECRET_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}
+      - DB_CONNECTION_TIMEOUT=${DB_CONNECTION_TIMEOUT:-10}
+      - DB_POOL_MIN_SIZE=${DB_POOL_MIN_SIZE:-1}
+      - DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-5}
+      - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-30}
+      - HEALTH_CHECK_DB_URL=${HEALTH_CHECK_DB_URL}
+      - HEALTH_CHECK_TIMEOUT=${HEALTH_CHECK_TIMEOUT:-2}
+      - CONNECTION_RETRY_MAX=${CONNECTION_RETRY_MAX:-2}
+      - CONNECTION_RETRY_INITIAL_DELAY=${CONNECTION_RETRY_INITIAL_DELAY:-1.0}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-10}
+      - CIRCUIT_BREAKER_ENABLED=${CIRCUIT_BREAKER_ENABLED:-true}
+      - CIRCUIT_BREAKER_FAILURE_THRESHOLD=${CIRCUIT_BREAKER_FAILURE_THRESHOLD:-5}
+      - CIRCUIT_BREAKER_TIMEOUT=${CIRCUIT_BREAKER_TIMEOUT:-60}
+      # Redis connection (for future ConversationState)
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - sequelspeak-network
+
+  # Frontend Service - React + nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Backend API URL (accessible from browser)
+        VITE_API_URL: http://localhost:8000
+    container_name: sequelspeak-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - sequelspeak-network
+
+  # Redis Service - Conversation state management
+  redis:
+    image: redis:7-alpine
+    container_name: sequelspeak-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - sequelspeak-network
+
+# Named volumes for persistent data
+volumes:
+  redis-data:
+    driver: local
+
+# Network for inter-service communication
+networks:
+  sequelspeak-network:
+    driver: bridge
