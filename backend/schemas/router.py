@@ -79,8 +79,6 @@ class RouterRequest(BaseModel):
     
     query: str = Field(
         ...,
-        min_length=MIN_QUERY_LENGTH,
-        max_length=MAX_QUERY_LENGTH,
         description=(
             "Natural language query from the user. "
             "Examples: 'Show sales from last month', 'How many active users?'"
@@ -106,7 +104,7 @@ class RouterRequest(BaseModel):
         description="Optional user and session metadata for tracking"
     )
     
-    @field_validator('query')
+    @field_validator('query', mode='before')
     @classmethod
     def validate_query(cls, v: str) -> str:
         """
@@ -127,6 +125,10 @@ class RouterRequest(BaseModel):
         Raises:
             ValueError: If query fails validation
         """
+        # Handle None or non-string types
+        if v is None or not isinstance(v, str):
+            raise ValueError("Query must be a string and cannot be None")
+        
         # Strip leading/trailing whitespace
         v_stripped = v.strip()
         
@@ -148,7 +150,7 @@ class RouterRequest(BaseModel):
                 "Query contains invalid null bytes"
             )
         
-        # Length validation (redundant with Field constraints, but explicit for clarity)
+        # Length validation on stripped value
         if len(v_stripped) < MIN_QUERY_LENGTH:
             raise ValueError(
                 f"Query must be at least {MIN_QUERY_LENGTH} character(s) long"
@@ -232,8 +234,18 @@ class RouterInitResponse(BaseModel):
     
     conversation_id: str = Field(
         ...,
-        description="Conversation ID for this request (generated or provided)"
+        description="Conversation ID for this request (generated or provided, UUID v4 format)"
     )
+    
+    @field_validator('conversation_id')
+    @classmethod
+    def validate_conversation_id_format(cls, v: str) -> str:
+        """Validate that conversation_id is a valid UUID v4 format."""
+        if not UUID_V4_PATTERN.match(v):
+            raise ValueError(
+                f"Conversation ID must be a valid UUID v4 format, got: {v}"
+            )
+        return v.lower()
     
     query: str = Field(
         ...,

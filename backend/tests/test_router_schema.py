@@ -5,8 +5,14 @@ Tests schema validation, field constraints, and error handling
 for the Router entry point input contract.
 """
 
+import sys
+import os
 import pytest
 from pydantic import ValidationError
+
+# Add backend to path to import services
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from schemas.router import (
     RouterRequest,
     RouterInitResponse,
@@ -336,7 +342,7 @@ class TestSchemaIntegration:
         
         # Simulate processing and create response
         response = RouterInitResponse(
-            conversation_id=request.conversation_id or "generated-uuid",
+            conversation_id=request.conversation_id or "12345678-90ab-4cde-8f01-234567890abc",
             query=request.query,
             timestamp="2026-02-08T10:30:00Z"
         )
@@ -352,8 +358,8 @@ class TestSchemaIntegration:
         
         assert request.conversation_id is None
         
-        # Simulate ID generation and response
-        generated_id = "gen-a1b2-c3d4-4e5f-6a7b-8c9d0e1f2a3b"
+        # Simulate ID generation and response (valid UUID v4)
+        generated_id = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
         response = RouterInitResponse(
             conversation_id=generated_id,
             query=request.query,
