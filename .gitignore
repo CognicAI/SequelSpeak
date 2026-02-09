@@ -104,5 +104,4 @@ Thumbs.db
 Thumbs.db
 temp/
 
-#Copilot
-.github/
+.github/copilot-instructions.md
