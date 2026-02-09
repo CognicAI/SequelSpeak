@@ -92,14 +92,6 @@ Thumbs.db
 *~
 
 # Sentry
-.sentryclirc
-
-# Temporary files
-*.tmp
-*.temp
-*.bak
-*.swp
-*~
 .DS_Store
 Thumbs.db
 temp/
