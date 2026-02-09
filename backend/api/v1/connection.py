@@ -100,9 +100,10 @@ async def test_connection(
     """
     # Log authenticated request (user_id from JWT)
     user_id = user_claims.get("sub", "unknown")
+    user_id_str = str(user_id)
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"Connection test requested by user: {user_id[:8]}...")
+    logger.info(f"Connection test requested by user: {user_id_str[:8]}...")
     
     # Initialize service with default dependencies (production configuration)
     db_service = DBConnectionService()
