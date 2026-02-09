@@ -6,6 +6,7 @@ the Router request schema. This is the entry point for all query requests.
 """
 
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, status, Request
 from pydantic import ValidationError
 from schemas.router import (
@@ -14,6 +15,7 @@ from schemas.router import (
     RouterErrorResponse,
     RouterErrorCode,
 )
+from services.conversation_state import conversation_state_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -132,16 +134,11 @@ async def initialize_query(request: Request, payload: RouterRequest) -> RouterIn
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
     
-    # Generate conversation ID if not provided
-    # Note: This is a temporary implementation for Subtask 2.1.2
-    # Full conversation lifecycle management will be implemented in Subtask 2.1.3
-    import uuid
-    conversation_id = payload.conversation_id or str(uuid.uuid4())
-    
-    # TODO (Subtask 2.1.4): Store conversation state in database
-    # For now, just return the initialized response
-    
-    from datetime import datetime, timezone
+    # Generate or reuse conversation ID and persist in conversation state
+    conversation_id = await conversation_state_manager.get_or_create(payload.conversation_id)
+
+    # Attach to request context for downstream propagation
+    request.state.conversation_id = conversation_id
     
     response = RouterInitResponse(
         conversation_id=conversation_id,
@@ -153,7 +150,7 @@ async def initialize_query(request: Request, payload: RouterRequest) -> RouterIn
     
     logger.info(
         f"Query initialized: conversation_id={conversation_id}",
-        extra={'extra_fields': {'correlation_id': correlation_id}}
+        extra={'extra_fields': {'correlation_id': correlation_id, 'conversation_id': conversation_id}}
     )
     
     return response
