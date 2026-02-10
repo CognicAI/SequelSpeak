@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile
       args:
         # Backend API URL (accessible from browser)
-        VITE_API_URL: http://localhost:8000
+        VITE_API_URL: ${VITE_API_URL}
         # Clerk Publishable Key (needed at build time for frontend)
         VITE_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
     container_name: sequelspeak-frontend
