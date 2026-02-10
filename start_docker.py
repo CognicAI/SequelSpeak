@@ -55,24 +55,24 @@ def check_docker_installed() -> bool:
 
 
 def check_env_file() -> bool:
-    """Check if .env.docker file exists"""
-    env_file = Path('.env.docker')
+    """Check if .env file exists"""
+    env_file = Path('.env')
     if not env_file.exists():
-        print_colored("⚠️  Warning: .env.docker not found", YELLOW)
-        print_colored("Creating .env.docker from template...", YELLOW)
+        print_colored("⚠️  Warning: .env not found", YELLOW)
+        print_colored("Creating .env from template...", YELLOW)
         
-        example_file = Path('.env.docker.example')
+        example_file = Path('.env.example')
         if example_file.exists():
             import shutil
             shutil.copy(example_file, env_file)
-            print_colored("✓ Created .env.docker from .env.docker.example", GREEN)
-            print_colored("\n⚠️  IMPORTANT: Edit .env.docker and set:", YELLOW)
+            print_colored("✓ Created .env from .env.example", GREEN)
+            print_colored("\n⚠️  IMPORTANT: Edit .env and set:", YELLOW)
             print_colored("  - SECRET_KEY (generate with: openssl rand -hex 32)", YELLOW)
             print_colored("  - CLERK_SECRET_KEY (from Clerk Dashboard)", YELLOW)
             print_colored("  - CLERK_PUBLISHABLE_KEY (from Clerk Dashboard)", YELLOW)
             return True
         else:
-            print_colored("✗ .env.docker.example not found", RED)
+            print_colored("✗ .env.example not found", RED)
             return False
     return True
 
@@ -105,9 +105,27 @@ def main():
     print_colored("This may take a few minutes on first run...", YELLOW)
     print()
     
+    # Step 1: Build frontend with no cache to ensure fresh env vars
+    print_colored("  → Building frontend (no cache for fresh env vars)...", YELLOW)
+    frontend_build = run_command([
+        'docker', 'compose',
+        '--env-file', '.env',
+        'build', '--no-cache', 'frontend'
+    ], check=False)
+    
+    if frontend_build.returncode != 0:
+        print_colored("✗ Failed to build frontend", RED)
+        print_colored(frontend_build.stderr, RED)
+        sys.exit(1)
+    
+    print_colored("  ✓ Frontend built successfully", GREEN)
+    print()
+    
+    # Step 2: Build other services (can use cache) and start all
+    print_colored("  → Building remaining services and starting...", YELLOW)
     result = run_command([
         'docker', 'compose',
-        '--env-file', '.env.docker',
+        '--env-file', '.env',
         'up', '-d', '--build'
     ], check=False)
     
