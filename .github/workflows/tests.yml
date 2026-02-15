@@ -75,13 +75,14 @@ jobs:
             --cov-fail-under=85
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: cognicai/SequelSpeak
           file: ./backend/coverage.xml
           flags: unittests
           name: codecov-${{ matrix.python-version }}
           fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Generate coverage badge
         if: matrix.python-version == '3.12' && github.ref == 'refs/heads/main'
