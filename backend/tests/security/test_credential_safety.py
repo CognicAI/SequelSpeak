@@ -26,7 +26,7 @@ import psycopg
 # Add backend to path - MUST be before any project imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from services.db_connection_service import DBConnectionService
 from clerk_backend_api import RequestState
 
@@ -70,9 +70,7 @@ def db_service():
     return DBConnectionService()
 
 
-
-# Create test client
-client = TestClient(app)
+# Note: client fixture is provided by tests/conftest.py
 
 
 # ============================================================================
@@ -192,11 +190,12 @@ class TestLogCredentialSafety:
 class TestErrorResponseSafety:
     """Tests to verify error responses don't expose credentials."""
     
-    def test_invalid_url_error_no_credentials(self):
+    @pytest.mark.asyncio
+    async def test_invalid_url_error_no_credentials(self, client):
         """Verify invalid URL error doesn't include the password."""
         test_url = "invalid://user:password123@host/db"
         
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": test_url}
         )
@@ -209,11 +208,12 @@ class TestErrorResponseSafety:
         data = response.json()
         assert "detail" in data
     
-    def test_connection_error_no_credentials_in_detail(self):
+    @pytest.mark.asyncio
+    async def test_connection_error_no_credentials_in_detail(self, client):
         """Verify connection error messages don't expose passwords."""
         test_url = "postgres://admin:TopSecret@unreachable.host:5432/db"
         
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": test_url}
         )
@@ -226,12 +226,13 @@ class TestErrorResponseSafety:
         data = response.json()
         assert "detail" in data
     
-    def test_validation_error_messages_are_generic(self, auth_headers, mock_auth):
+    @pytest.mark.asyncio
+    async def test_validation_error_messages_are_generic(self, client, auth_headers, mock_auth):
         """Verify validation errors use generic messages."""
         # URL with null byte
         test_url = "postgres://user:pass%00word@host/db"
         
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": test_url},
             headers=auth_headers
@@ -244,11 +245,12 @@ class TestErrorResponseSafety:
             assert "null" not in data["detail"].lower()
             assert "invalid" in data["detail"].lower()
     
-    def test_sql_injection_error_no_details(self):
+    @pytest.mark.asyncio
+    async def test_sql_injection_error_no_details(self, client):
         """Verify SQL injection blocking uses generic error messages."""
         test_url = "postgres://user:pass@host/db; DROP TABLE users;--"
         
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": test_url}
         )
@@ -397,11 +399,12 @@ class TestInjectionPrevention:
 class TestAPIEndpointSecurity:
     """End-to-end tests for API response security."""
     
-    def test_success_response_structure(self):
+    @pytest.mark.asyncio
+    async def test_success_response_structure(self, client):
         """Verify successful response has minimal structure."""
         # We can't actually connect, but we can verify the structure expectation
         # by checking error responses
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": "postgres://user:pass@localhost:5432/test"}
         )
@@ -414,9 +417,10 @@ class TestAPIEndpointSecurity:
         if response.status_code != 200:
             assert "detail" in data
     
-    def test_malformed_json_no_credential_leak(self):
+    @pytest.mark.asyncio
+    async def test_malformed_json_no_credential_leak(self, client):
         """Verify malformed requests don't expose internal details."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             content="not valid json",
             headers={"Content-Type": "application/json"}
@@ -429,9 +433,10 @@ class TestAPIEndpointSecurity:
         data = response.json()
         assert "detail" in data
     
-    def test_missing_field_error_is_safe(self, auth_headers, mock_auth):
+    @pytest.mark.asyncio
+    async def test_missing_field_error_is_safe(self, client, auth_headers, mock_auth):
         """Verify missing field errors are generic."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={},  # Missing connection_url
             headers=auth_headers
@@ -442,7 +447,8 @@ class TestAPIEndpointSecurity:
         data = response.json()
         assert "detail" in data
     
-    def test_all_error_codes_have_safe_messages(self):
+    @pytest.mark.asyncio
+    async def test_all_error_codes_have_safe_messages(self, client):
         """Verify all error code scenarios produce safe messages."""
         test_cases = [
             ("invalid://url", "INVALID_URL"),
@@ -451,7 +457,7 @@ class TestAPIEndpointSecurity:
         ]
         
         for url, expected_code in test_cases:
-            response = client.post(
+            response = await client.post(
                 "/api/v1/utils/test-connection",
                 json={"connection_url": url}
             )

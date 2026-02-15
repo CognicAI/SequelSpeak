@@ -14,6 +14,7 @@ from schemas.router import (
     RouterErrorResponse,
     RouterErrorCode,
 )
+from services.conversation_state import conversation_state_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -132,14 +133,15 @@ async def initialize_query(request: Request, payload: RouterRequest) -> RouterIn
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
     
-    # Generate conversation ID if not provided
-    # Note: This is a temporary implementation for Subtask 2.1.2
-    # Full conversation lifecycle management will be implemented in Subtask 2.1.3
-    import uuid
-    conversation_id = payload.conversation_id or str(uuid.uuid4())
+    # Get or create conversation using state manager
+    conversation_id = await conversation_state_manager.get_or_create(payload.conversation_id)
     
-    # TODO (Subtask 2.1.4): Store conversation state in database
-    # For now, just return the initialized response
+    # Update conversation state with any provided metadata
+    if payload.user_context:
+        await conversation_state_manager.upsert_state(
+            conversation_id,
+            metadata={'user_context': payload.user_context.model_dump()}
+        )
     
     from datetime import datetime, timezone
     

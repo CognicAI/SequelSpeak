@@ -12,16 +12,17 @@ Tests cover:
 import sys
 import os
 import time
+import pytest
 
 # Add backend to path to import modules - MUST be before any project imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from main import app
 from config import settings
 
 
-client = TestClient(app)
+# Note: client fixture is provided by tests/conftest.py
 
 
 # ============================================================================
@@ -31,14 +32,16 @@ client = TestClient(app)
 class TestHealthEndpointStructure:
     """Tests for health endpoint response structure."""
 
-    def test_health_endpoint_exists(self):
+    @pytest.mark.asyncio
+    async def test_health_endpoint_exists(self, client):
         """Test that /api/v1/health endpoint exists and responds."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         assert response.status_code == 200
 
-    def test_health_response_has_required_fields(self):
+    @pytest.mark.asyncio
+    async def test_health_response_has_required_fields(self, client):
         """Test that response contains all required fields."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         
         assert "status" in data
@@ -46,16 +49,18 @@ class TestHealthEndpointStructure:
         assert "database" in data
         assert "status" in data["database"]
 
-    def test_health_status_is_always_ok(self):
+    @pytest.mark.asyncio
+    async def test_health_status_is_always_ok(self, client):
         """Test that API status is always 'ok' when endpoint responds."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         
         assert data["status"] == "ok"
 
-    def test_health_timestamp_is_iso_format(self):
+    @pytest.mark.asyncio
+    async def test_health_timestamp_is_iso_format(self, client):
         """Test that timestamp is in ISO 8601 format."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         
         # ISO 8601 format check - should contain 'T' separator
@@ -69,26 +74,28 @@ class TestHealthEndpointStructure:
 class TestDatabaseHealthStatus:
     """Tests for database health reporting."""
 
-    def test_database_status_reporting(self):
+    @pytest.mark.asyncio
+    async def test_database_status_reporting(self, client):
         """Test health check reports database status (connected/unavailable/unknown)."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
 
         assert response.status_code == 200
         assert data["database"]["status"] in ["connected", "unavailable", "unknown"]
         assert "consecutive_failures" in data["database"]
 
-    def test_database_status_with_configured_url(self):
+    @pytest.mark.asyncio
+    async def test_database_status_with_configured_url(self, client):
         """Test health check when database URL is configured."""
         if not settings.health_check_db_url:
             # If no URL configured, status should be unknown
-            response = client.get("/api/v1/health")
+            response = await client.get("/api/v1/health")
             data = response.json()
             assert data["database"]["status"] == "unknown"
             assert data["database"]["latency_ms"] is None
         else:
             # If URL is configured, check for connected or unavailable
-            response = client.get("/api/v1/health")
+            response = await client.get("/api/v1/health")
             data = response.json()
             assert data["database"]["status"] in ["connected", "unavailable"]
             assert isinstance(data["database"]["consecutive_failures"], int)
@@ -101,15 +108,16 @@ class TestDatabaseHealthStatus:
 class TestHealthLatency:
     """Tests for response latency measurement."""
 
-    def test_latency_is_measured_when_db_configured(self):
+    @pytest.mark.asyncio
+    async def test_latency_is_measured_when_db_configured(self, client):
         """Test that latency_ms is populated when database URL is configured."""
         if not settings.health_check_db_url:
             # Skip if no URL configured
-            response = client.get("/api/v1/health")
+            response = await client.get("/api/v1/health")
             data = response.json()
             assert data["database"]["latency_ms"] is None
         else:
-            response = client.get("/api/v1/health")
+            response = await client.get("/api/v1/health")
             data = response.json()
             
             # Latency should be measured regardless of success/failure
@@ -118,10 +126,11 @@ class TestHealthLatency:
                 assert isinstance(data["database"]["latency_ms"], int)
                 assert data["database"]["latency_ms"] >= 0
 
-    def test_endpoint_response_time(self):
+    @pytest.mark.asyncio
+    async def test_endpoint_response_time(self, client):
         """Test that health endpoint responds quickly."""
         start = time.perf_counter()
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         elapsed_ms = (time.perf_counter() - start) * 1000
         
         assert response.status_code == 200
@@ -136,14 +145,16 @@ class TestHealthLatency:
 class TestGracefulFailure:
     """Tests for graceful failure handling."""
 
-    def test_always_returns_200(self):
+    @pytest.mark.asyncio
+    async def test_always_returns_200(self, client):
         """Test that endpoint always returns 200 regardless of database state."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         assert response.status_code == 200
 
-    def test_response_structure_on_any_state(self):
+    @pytest.mark.asyncio
+    async def test_response_structure_on_any_state(self, client):
         """Test that response always has proper structure."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         
         # Should always have these fields
@@ -160,9 +171,10 @@ class TestGracefulFailure:
 class TestNoCredentialExposure:
     """Tests to ensure credentials are never exposed in health response."""
 
-    def test_no_credentials_in_response(self):
+    @pytest.mark.asyncio
+    async def test_no_credentials_in_response(self, client):
         """Test that database credentials are not exposed in response."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         response_text = response.text.lower()
         
         # Check for common credential patterns (if URL is configured)
@@ -171,18 +183,20 @@ class TestNoCredentialExposure:
             assert "password" not in response_text or "null" in response_text
             assert "postgres://" not in response_text
             
-    def test_response_only_has_safe_fields(self):
+    @pytest.mark.asyncio
+    async def test_response_only_has_safe_fields(self, client):
         """Test that response only contains expected safe fields."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         
         # Verify only expected keys exist
         assert set(data.keys()) == {"status", "timestamp", "database"}
         assert set(data["database"].keys()) == {"status", "latency_ms", "consecutive_failures"}
 
-    def test_no_sensitive_data_in_headers(self):
+    @pytest.mark.asyncio
+    async def test_no_sensitive_data_in_headers(self, client):
         """Test that response headers don't leak sensitive information."""
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         
         # Check headers don't contain sensitive data
         headers_str = str(response.headers).lower()
@@ -197,14 +211,15 @@ class TestNoCredentialExposure:
 class TestHealthEndpointIntegration:
     """Comprehensive integration tests for all system states."""
 
-    def test_health_endpoint_complete_flow(self):
+    @pytest.mark.asyncio
+    async def test_health_endpoint_complete_flow(self, client):
         """
         INTEGRATION TEST: Complete health check flow
         - Endpoint is accessible
         - Returns proper structure
         - No credentials exposed
         """
-        response = client.get("/api/v1/health")
+        response = await client.get("/api/v1/health")
         data = response.json()
         
         # Status checks
@@ -230,12 +245,13 @@ class TestHealthEndpointIntegration:
         # Security validation - no credentials in response
         assert "password" not in response.text.lower() or "null" in response.text.lower()
 
-    def test_health_check_idempotency(self):
+    @pytest.mark.asyncio
+    async def test_health_check_idempotency(self, client):
         """
         Test that multiple calls return consistent structure.
         """
-        response1 = client.get("/api/v1/health")
-        response2 = client.get("/api/v1/health")
+        response1 = await client.get("/api/v1/health")
+        response2 = await client.get("/api/v1/health")
         
         data1 = response1.json()
         data2 = response2.json()

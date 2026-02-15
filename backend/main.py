@@ -17,6 +17,7 @@ import time
 import asyncio
 from typing import Callable, Awaitable, Any
 from services.connection_pool import pool_manager
+from services.conversation_state import conversation_state_manager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -76,6 +77,10 @@ async def lifespan(app: FastAPI):
         prom_metrics.initialize_metrics()
         logger.info("✓ Prometheus metrics initialized")
     
+    # Initialize conversation state manager
+    await conversation_state_manager.initialize()
+    logger.info(f"✓ Conversation state manager initialized (mode: {conversation_state_manager.storage_mode})")
+    
     logger.info("=" * 60)
     logger.info("✓ Configuration validated successfully")
     logger.info("✓ Connection pool manager initialized")
@@ -113,6 +118,9 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         logger.info("✓ Metrics task stopped")
+    
+    await conversation_state_manager.close()
+    logger.info("✓ Conversation state manager closed")
     
     await pool_manager.close_all()
     logger.info("✓ Shutdown complete")

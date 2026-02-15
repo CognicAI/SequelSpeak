@@ -1,0 +1,71 @@
+fix: Resolve Prometheus metrics test failure and add CI/testing polish
+
+## Primary Fix: Prometheus Metrics Test Failure
+- Replace Info metric with Gauge for `sequelspeak_info` metric
+  * Info metric was not outputting labels correctly in Prometheus format
+  * Changed from `Info('sequelspeak', ...)` to `Gauge('sequelspeak_info', ['version', 'environment', 'app_name'])`
+  * Updated initialization from `.info({...})` to `.labels(...).set(1)`
+- Add session-scoped test fixture to initialize metrics before test runs
+  * Tests were failing because lifespan events weren't triggered
+  * Added `initialize_test_metrics()` fixture in conftest.py
+  * Ensures metrics are properly set up with labels before any test execution
+
+## CI/Testing Polish Upgrades
+
+### 1. Pin Starlette Version
+- Add `starlette>=0.52.0,<0.53.0` to requirements.txt
+- Prevents future breaking changes from deprecation warnings
+- Currently using 0.52.1, pinned to 0.52.x series
+
+### 2. Coverage Badge & Reports
+- Add `genbadge[coverage]>=1.1.0` for SVG badge generation
+- Configure automatic coverage tracking in pytest.ini:
+  * Track coverage for services, api, and utils modules
+  * Generate term-missing, HTML, and XML reports
+- Update .gitignore to exclude coverage.svg artifact
+- Coverage badge generated and uploaded as CI artifact (90-day retention on main branch)
+
+### 3. Enhanced CI Pipeline
+- Add Redis service container with health checks
+  * Enables integration testing with Redis in CI
+  * Set REDIS_URL environment variable for tests
+- Add test summary & artifact uploads:
+  * Coverage badge artifact (90 days on main)
+  * HTML coverage report artifact (30 days)
+  * Test results artifact with always() condition (30 days, uploaded even on failure)
+- Enhanced GitHub Actions summary with markdown coverage table
+
+### 4. Improved Test Configuration
+- Update pytest.ini with coverage defaults and async settings
+- Update `integration` marker description to "Integration tests with Redis"
+- Configure asyncio_mode and fixture loop scope
+
+### 5. Documentation Updates
+- Add status badges to README.md (Tests, Codecov, Python, FastAPI, Code style)
+- Add placeholder note for GitHub username replacement
+- Enhance testing section with:
+  * Coverage report generation commands
+  * Integration test instructions with Redis setup
+  * Marker-based test filtering examples
+- Update backend development section with Redis setup guidance
+
+## Additional Changes (Story 2.1 Context)
+- Add Redis configuration settings to config.py
+- Add conversation_state.py service implementation
+- Update .env.example with comprehensive Redis documentation
+- Add query.py API endpoint enhancements
+- Update various test files for improved test isolation and Redis integration
+- Add start.sh convenience script
+
+## Test Results
+✅ 540 tests passed (previously 539 passed, 1 failed)
+✅ 82% code coverage across services, api, and utils modules
+✅ All coverage artifacts generated successfully (XML, HTML, SVG badge)
+
+## Breaking Changes
+None - all changes are additive or fixes
+
+## Related Issues
+- Fixes prometheus metrics test failure
+- Implements polish upgrades for production readiness
+- Part of Story 2.1: Router conversation state initialization

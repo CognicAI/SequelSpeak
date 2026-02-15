@@ -1,8 +1,8 @@
 import os
-from pydantic_settings import BaseSettings
-from pydantic import ConfigDict, field_validator, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, ValidationError
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any
 import sys
 
 # Get the directory where this config file is located
@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     All sensitive configuration must be provided via environment variables.
     The .env file is loaded automatically for development convenience.
     """
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         env_file=str(ENV_FILE), 
         env_file_encoding='utf-8',
         # Don't ignore extra fields - helps catch typos in .env
@@ -67,8 +67,18 @@ class Settings(BaseSettings):
     # Metrics Settings
     metrics_enabled: bool = True  # Enable Prometheus metrics collection
     app_version: str = "1.0.0"  # Application version for metrics labeling
+    
+    # Redis Settings (Conversation State Storage)
+    redis_enabled: bool = True  # Enable Redis-backed conversation state
+    redis_host: str = "localhost"  # Redis server host
+    redis_port: int = 6379  # Redis server port
+    redis_db: int = 0  # Redis database number (0-15)
+    redis_password: Optional[str] = None  # Redis authentication password
+    redis_ssl: bool = False  # Enable SSL/TLS for Redis connection
+    redis_timeout: int = 5  # Redis connection timeout in seconds
+    conversation_state_ttl: int = 86400  # Conversation state TTL in seconds (24 hours)
 
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         env_file=".env" if os.getenv("ENVIRONMENT") != "production" else None,
         env_file_encoding='utf-8',
         extra='forbid'
@@ -85,9 +95,9 @@ class Settings(BaseSettings):
     
     @field_validator('allowed_origins')
     @classmethod
-    def validate_cors_origins(cls, v: str, info) -> str:
+    def validate_cors_origins(cls, v: str, info: Any) -> str:
         """Validate CORS configuration based on environment."""
-        environment = info.data.get('environment', 'development')
+        environment = info.data.get('environment', 'development') if hasattr(info, 'data') and info.data else 'development'
         
         if environment == "production" and v == "*":
             raise ValueError(
@@ -108,14 +118,14 @@ class Settings(BaseSettings):
     
     @field_validator('secret_key')
     @classmethod
-    def validate_secret_key(cls, v: Optional[str], info) -> Optional[str]:
+    def validate_secret_key(cls, v: Optional[str], info: Any) -> Optional[str]:
         """Ensure secret_key is set in production."""
         # Convert empty string to None for consistency
         if v == '':
             v = None
         
         # Access environment from ValidationInfo context
-        environment = info.data.get('environment', 'development')
+        environment = info.data.get('environment', 'development') if hasattr(info, 'data') and info.data else 'development'
         
         if environment == 'production' and not v:
             raise ValueError(
@@ -235,6 +245,56 @@ class Settings(BaseSettings):
             )
         return v
     
+    @field_validator('redis_port')
+    @classmethod
+    def validate_redis_port(cls, v: int) -> int:
+        """Ensure Redis port is valid."""
+        if v <= 0 or v > 65535:
+            raise ValueError(f"redis_port must be between 1 and 65535, got: {v}")
+        return v
+    
+    @field_validator('redis_db')
+    @classmethod
+    def validate_redis_db(cls, v: int) -> int:
+        """Ensure Redis database number is valid (0-15)."""
+        if v < 0 or v > 15:
+            raise ValueError(f"redis_db must be between 0 and 15, got: {v}")
+        return v
+    
+    @field_validator('redis_timeout')
+    @classmethod
+    def validate_redis_timeout(cls, v: int) -> int:
+        """Ensure Redis timeout is positive."""
+        if v <= 0:
+            raise ValueError(f"redis_timeout must be positive, got: {v}")
+        if v > 30:
+            print(
+                f"WARNING: redis_timeout is very high ({v}s). "
+                f"Consider keeping under 30s for responsive connections.",
+                file=sys.stderr
+            )
+        return v
+    
+    @field_validator('conversation_state_ttl')
+    @classmethod
+    def validate_conversation_state_ttl(cls, v: int) -> int:
+        """Validate conversation state TTL."""
+        if v < 0:
+            raise ValueError(f"conversation_state_ttl must be non-negative, got: {v}")
+        if v == 0:
+            print(
+                "WARNING: conversation_state_ttl is 0 (no expiration). "
+                "This may lead to unbounded Redis memory growth.",
+                file=sys.stderr
+            )
+        if v > 2592000:  # 30 days
+            print(
+                f"WARNING: conversation_state_ttl is very high ({v}s = {v//86400} days). "
+                f"Consider keeping under 30 days to prevent memory bloat.",
+                file=sys.stderr
+            )
+        return v
+    
     def get_allowed_origins_list(self) -> List[str]:
         """Parse allowed_origins string into list."""
         if self.allowed_origins == "*":
@@ -263,7 +323,7 @@ def load_settings() -> Settings:
     Returns validated Settings object or raises ValidationError with clear message.
     """
     try:
-        settings = Settings()
+        settings = Settings()  # type: ignore[call-arg]
         settings.validate_no_secrets_hardcoded()
         return settings
     except ValidationError as e:

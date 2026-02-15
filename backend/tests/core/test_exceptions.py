@@ -7,13 +7,13 @@ from unittest.mock import patch
 # Add backend to path to import modules - MUST be before any project imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from exceptions import DatabaseConnectionError
 from schemas.errors import ErrorCode
 from main import app
 
-# Create test client
-client = TestClient(app)
+
+# Note: client fixture is provided by tests/conftest.py
 
 
 @pytest.fixture
@@ -293,9 +293,10 @@ class TestDatabaseConnectionErrorHandler:
 class TestExceptionHandlerEndToEnd:
     """End-to-end tests verifying exception handler works through actual API calls."""
     
-    def test_connection_endpoint_invalid_url_triggers_handler(self, auth_headers, mock_auth):
+    @pytest.mark.asyncio
+    async def test_connection_endpoint_invalid_url_triggers_handler(self, client, auth_headers, mock_auth):
         """Test that invalid URL in connection endpoint triggers the exception handler."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": "invalid://url"},
             headers=auth_headers
@@ -310,9 +311,10 @@ class TestExceptionHandlerEndToEnd:
         assert "error_code" in data
         assert data["error_code"] == ErrorCode.INVALID_URL.value
     
-    def test_connection_endpoint_missing_host_triggers_handler(self, auth_headers, mock_auth):
+    @pytest.mark.asyncio
+    async def test_connection_endpoint_missing_host_triggers_handler(self, client, auth_headers, mock_auth):
         """Test that URL with missing host triggers the exception handler."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": "postgres:///dbname"},
             headers=auth_headers
@@ -326,9 +328,10 @@ class TestExceptionHandlerEndToEnd:
         assert data["error_code"] == ErrorCode.INVALID_URL.value
         assert "Host is missing" in data["detail"]
     
-    def test_connection_endpoint_wrong_scheme_triggers_handler(self, auth_headers, mock_auth):
+    @pytest.mark.asyncio
+    async def test_connection_endpoint_wrong_scheme_triggers_handler(self, client, auth_headers, mock_auth):
         """Test that wrong URL scheme triggers the exception handler."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/utils/test-connection",
             json={"connection_url": "mysql://user:pass@localhost:5432/db"},
             headers=auth_headers

@@ -1,5 +1,12 @@
 # SequelSpeak
 
+<!-- Replace YOUR_USERNAME with your GitHub username in the badge URLs below -->
+[![Backend Tests](https://github.com/YOUR_USERNAME/SequelSpeak/actions/workflows/tests.yml/badge.svg)](https://github.com/YOUR_USERNAME/SequelSpeak/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/YOUR_USERNAME/SequelSpeak/branch/main/graph/badge.svg)](https://codecov.io/gh/YOUR_USERNAME/SequelSpeak)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-009688.svg)](https://fastapi.tiangolo.com)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 An agentic, schema-aware Text-to-SQL system that converts natural language to safe, validated SQL for PostgreSQL.
 
 ## Architecture
@@ -73,6 +80,16 @@ pytest backend/tests/ -v
 
 # Run with coverage
 pytest backend/tests/ -v --cov=backend/services --cov=backend/api --cov-report=term-missing
+
+# Generate HTML coverage report
+pytest backend/tests/ --cov=backend/services --cov=backend/api --cov-report=html
+# Open htmlcov/index.html in browser to view detailed coverage
+
+# Run only integration tests (requires Redis)
+pytest backend/tests/ -v -m integration
+
+# Run excluding slow tests
+pytest backend/tests/ -v -m "not slow"
 ```
 
 ## Project Structure
@@ -113,12 +130,17 @@ source .venv/bin/activate
 cd backend
 uvicorn main:app --reload --port 8000
 
-# Run tests
+# Run tests (basic)
 cd ..
 pytest backend/tests/ -v
 
-# Check test coverage
-pytest backend/tests/ --cov=backend/services --cov=backend/api --cov-report=html
+# Run tests with coverage report
+pytest backend/tests/ --cov=backend/services --cov=backend/api --cov=backend/utils --cov-report=html
+# View coverage report: open backend/htmlcov/index.html
+
+# Run integration tests (requires Redis running)
+docker run -d -p 6379:6379 redis:7-alpine
+pytest backend/tests/ -v -m integration
 ```
 
 ### Frontend Development

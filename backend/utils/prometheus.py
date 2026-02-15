@@ -12,7 +12,6 @@ from prometheus_client import (
     Counter, 
     Histogram, 
     Gauge, 
-    Info,
     generate_latest, 
     CONTENT_TYPE_LATEST, 
     CollectorRegistry,
@@ -30,10 +29,11 @@ registry = CollectorRegistry()
 # Metric Definitions
 # ============================================================================
 
-# Application info metric
-app_info = Info(
-    'sequelspeak',
+# Application info metric (using Gauge with labels instead of Info for reliability)
+app_info = Gauge(
+    'sequelspeak_info',
     'Application information',
+    ['version', 'environment', 'app_name'],
     registry=registry
 )
 
@@ -140,12 +140,12 @@ def initialize_metrics() -> None:
     Should be called during application startup.
     """
     try:
-        # Set application info
-        app_info.info({
-            'version': getattr(settings, 'app_version', '1.0.0'),
-            'environment': settings.environment,
-            'app_name': settings.app_name
-        })
+        # Set application info gauge with labels
+        app_info.labels(
+            version=getattr(settings, 'app_version', '1.0.0'),
+            environment=settings.environment,
+            app_name=settings.app_name
+        ).set(1)
         logger.info("Prometheus metrics initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize Prometheus metrics: {e}")

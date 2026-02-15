@@ -6,7 +6,7 @@ with the FastAPI application.
 """
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from utils.prometheus import extract_path_template
 import re
 
@@ -64,20 +64,23 @@ class TestPathTemplating:
 class TestMetricsEndpoint:
     """Test the /metrics endpoint."""
     
-    def test_metrics_endpoint_returns_200(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint_returns_200(self, client: AsyncClient):
         """Metrics endpoint should return HTTP 200."""
-        response = client.get("/metrics")
+        response = await client.get("/metrics")
         assert response.status_code == 200
     
-    def test_metrics_endpoint_content_type(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint_content_type(self, client: AsyncClient):
         """Metrics endpoint should return correct content type."""
-        response = client.get("/metrics")
+        response = await client.get("/metrics")
         # Prometheus metrics use text/plain with version parameter
         assert "text/plain" in response.headers["content-type"]
     
-    def test_metrics_endpoint_returns_prometheus_format(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint_returns_prometheus_format(self, client: AsyncClient):
         """Metrics should be in valid Prometheus format."""
-        response = client.get("/metrics")
+        response = await client.get("/metrics")
         content = response.text
         
         # Check for required metrics
@@ -89,9 +92,10 @@ class TestMetricsEndpoint:
         # Check metric format (HELP and TYPE lines)
         assert "# HELP" in content or "# TYPE" in content
     
-    def test_metrics_endpoint_includes_app_info(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_metrics_endpoint_includes_app_info(self, client: AsyncClient):
         """Metrics should include application info."""
-        response = client.get("/metrics")
+        response = await client.get("/metrics")
         content = response.text
         
         # Should have sequelspeak_info with version and environment
@@ -103,29 +107,31 @@ class TestMetricsEndpoint:
 class TestMetricsCollection:
     """Test metrics are collected correctly."""
     
-    def test_http_requests_are_counted(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_http_requests_are_counted(self, client: AsyncClient):
         """HTTP requests should increment request counter."""
         # Make initial request to get baseline
-        client.get("/metrics")
-        initial_metrics = client.get("/metrics").text
+        await client.get("/metrics")
+        initial_metrics = (await client.get("/metrics")).text
         
         # Make a request to root endpoint
-        client.get("/")
+        await client.get("/")
         
         # Get metrics again
-        updated_metrics = client.get("/metrics").text
+        updated_metrics = (await client.get("/metrics")).text
         
         # Should have recorded the request to /
         assert 'endpoint="/"' in updated_metrics
         assert 'method="GET"' in updated_metrics
     
-    def test_request_duration_is_tracked(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_request_duration_is_tracked(self, client: AsyncClient):
         """Request duration should be recorded in histogram."""
         # Make a request
-        client.get("/")
+        await client.get("/")
         
         # Check metrics
-        metrics = client.get("/metrics").text
+        metrics = (await client.get("/metrics")).text
         
         # Should have duration histogram data
         assert "http_request_duration_seconds" in metrics
@@ -133,11 +139,12 @@ class TestMetricsCollection:
         assert ("http_request_duration_seconds_bucket" in metrics or
                 "http_request_duration_seconds_count" in metrics)
     
-    def test_path_templating_in_metrics(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_path_templating_in_metrics(self, client: AsyncClient):
         """Metrics should use path templates, not raw paths."""
         # This test assumes we have endpoints with IDs
         # If not, we can just verify the templating works in isolation
-        metrics = client.get("/metrics").text
+        metrics = (await client.get("/metrics")).text
         
         # Check that common static paths are present
         assert 'endpoint="/metrics"' in metrics or 'endpoint="/"' in metrics
@@ -151,9 +158,10 @@ class TestMetricsCollection:
 class TestMetricsConfiguration:
     """Test metrics can be disabled via configuration."""
     
-    def test_metrics_disabled_returns_message(self, client_with_metrics_disabled: TestClient):
+    @pytest.mark.asyncio
+    async def test_metrics_disabled_returns_message(self, client_with_metrics_disabled: AsyncClient):
         """When metrics disabled, endpoint should return disabled message."""
-        response = client_with_metrics_disabled.get("/metrics")
+        response = await client_with_metrics_disabled.get("/metrics")
         assert response.status_code == 200
         assert "Metrics disabled" in response.text
 
@@ -161,18 +169,20 @@ class TestMetricsConfiguration:
 class TestDatabaseErrorTracking:
     """Test database errors are tracked in metrics."""
     
-    def test_database_errors_metric_exists(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_database_errors_metric_exists(self, client: AsyncClient):
         """Database errors metric should be present."""
-        metrics = client.get("/metrics").text
+        metrics = (await client.get("/metrics")).text
         assert "database_errors_total" in metrics
 
 
 class TestConnectionPoolMetrics:
     """Test connection pool metrics."""
     
-    def test_connection_pool_metrics_exist(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_connection_pool_metrics_exist(self, client: AsyncClient):
         """Connection pool metrics should be present."""
-        metrics = client.get("/metrics").text
+        metrics = (await client.get("/metrics")).text
         
         # Check for connection pool metrics
         assert "active_database_connections" in metrics
@@ -183,22 +193,12 @@ class TestConnectionPoolMetrics:
 # Fixtures
 # ============================================================================
 
-@pytest.fixture
-def client():
-    """Create a test client with metrics enabled."""
-    from main import app
-    from config import settings
-    
-    # Ensure metrics are enabled
-    settings.metrics_enabled = True
-    
-    with TestClient(app) as test_client:
-        yield test_client
+# Note: client fixture is provided by tests/conftest.py
 
 
 @pytest.fixture
-def client_with_metrics_disabled():
-    """Create a test client with metrics disabled."""
+async def client_with_metrics_disabled():
+    """Create an async test client with metrics disabled."""
     from main import app
     from config import settings
     
@@ -207,8 +207,8 @@ def client_with_metrics_disabled():
     settings.metrics_enabled = False
     
     try:
-        with TestClient(app) as test_client:
-            yield test_client
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            yield ac
     finally:
         # Restore original value
         settings.metrics_enabled = original_value

@@ -11,23 +11,25 @@ import os
 # Add backend to path to import services - MUST be before any project imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from fastapi.testclient import TestClient
+import pytest
+from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from main import app
 from schemas.router import RouterErrorCode
 from api.v1.query import map_validation_error_to_router_error
 
-# Create test client
-client = TestClient(app)
+
+# Note: client fixture is provided by tests/conftest.py
 
 
 class TestQueryValidationEndpoint:
     """Integration tests for POST /api/v1/query endpoint validation."""
     
-    def test_valid_request_with_conversation_id(self):
+    @pytest.mark.asyncio
+    async def test_valid_request_with_conversation_id(self, client):
         """Test valid request with conversation ID."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "Show me sales from last month",
@@ -43,9 +45,10 @@ class TestQueryValidationEndpoint:
         assert "timestamp" in data
         assert "correlation_id" in data
     
-    def test_valid_request_without_conversation_id(self):
+    @pytest.mark.asyncio
+    async def test_valid_request_without_conversation_id(self, client):
         """Test valid request without conversation ID (will be generated)."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "How many active users do we have?"
@@ -58,9 +61,10 @@ class TestQueryValidationEndpoint:
         assert data["conversation_id"] is not None  # Should be generated
         assert data["query"] == "How many active users do we have?"
     
-    def test_valid_request_with_whitespace_stripped(self):
+    @pytest.mark.asyncio
+    async def test_valid_request_with_whitespace_stripped(self, client):
         """Test that leading/trailing whitespace is stripped from query."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "  Show me revenue  \n\t"
@@ -71,9 +75,10 @@ class TestQueryValidationEndpoint:
         data = response.json()
         assert data["query"] == "Show me revenue"
     
-    def test_empty_query_rejected(self):
+    @pytest.mark.asyncio
+    async def test_empty_query_rejected(self, client):
         """Test that empty query is rejected with appropriate error."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": ""
@@ -86,9 +91,10 @@ class TestQueryValidationEndpoint:
         assert "error_code" in data
         assert data["error_code"] == RouterErrorCode.QUERY_EMPTY.value
     
-    def test_whitespace_only_query_rejected(self):
+    @pytest.mark.asyncio
+    async def test_whitespace_only_query_rejected(self, client):
         """Test that whitespace-only query is rejected."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "   \n\t   "
@@ -99,11 +105,12 @@ class TestQueryValidationEndpoint:
         data = response.json()
         assert data["error_code"] == RouterErrorCode.QUERY_EMPTY.value
     
-    def test_query_too_long_rejected(self):
+    @pytest.mark.asyncio
+    async def test_query_too_long_rejected(self, client):
         """Test that query exceeding max length is rejected."""
         long_query = "a" * 10001  # MAX_QUERY_LENGTH is 10000
         
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": long_query
@@ -114,11 +121,12 @@ class TestQueryValidationEndpoint:
         data = response.json()
         assert data["error_code"] == RouterErrorCode.QUERY_TOO_LONG.value
     
-    def test_query_at_max_length_accepted(self):
+    @pytest.mark.asyncio
+    async def test_query_at_max_length_accepted(self, client):
         """Test that query at exactly max length is accepted."""
         max_length_query = "a" * 10000
         
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": max_length_query
@@ -129,9 +137,10 @@ class TestQueryValidationEndpoint:
         data = response.json()
         assert len(data["query"]) == 10000
     
-    def test_query_with_null_byte_rejected(self):
+    @pytest.mark.asyncio
+    async def test_query_with_null_byte_rejected(self, client):
         """Test that query with null byte is rejected."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "test\x00query"
@@ -142,7 +151,8 @@ class TestQueryValidationEndpoint:
         data = response.json()
         assert data["error_code"] == RouterErrorCode.INVALID_QUERY.value
     
-    def test_invalid_conversation_id_format_rejected(self):
+    @pytest.mark.asyncio
+    async def test_invalid_conversation_id_format_rejected(self, client):
         """Test that invalid UUID format is rejected."""
         invalid_ids = [
             "not-a-uuid",
@@ -151,7 +161,7 @@ class TestQueryValidationEndpoint:
         ]
         
         for invalid_id in invalid_ids:
-            response = client.post(
+            response = await client.post(
                 "/api/v1/query",
                 json={
                     "query": "test query",
@@ -163,9 +173,10 @@ class TestQueryValidationEndpoint:
             data = response.json()
             assert data["error_code"] == RouterErrorCode.INVALID_CONVERSATION_ID.value
     
-    def test_missing_query_field_rejected(self):
+    @pytest.mark.asyncio
+    async def test_missing_query_field_rejected(self, client):
         """Test that request without query field is rejected."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
@@ -174,9 +185,10 @@ class TestQueryValidationEndpoint:
         
         assert response.status_code == 422  # Unprocessable Entity from FastAPI
     
-    def test_malformed_json_rejected(self):
+    @pytest.mark.asyncio
+    async def test_malformed_json_rejected(self, client):
         """Test that malformed JSON is rejected."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             content=b"{ invalid json }",
             headers={"Content-Type": "application/json"}
@@ -184,9 +196,10 @@ class TestQueryValidationEndpoint:
         
         assert response.status_code == 422
     
-    def test_wrong_content_type_rejected(self):
+    @pytest.mark.asyncio
+    async def test_wrong_content_type_rejected(self, client):
         """Test that non-JSON content type is rejected."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             content=b"query=test",
             headers={"Content-Type": "application/x-www-form-urlencoded"}
@@ -194,9 +207,10 @@ class TestQueryValidationEndpoint:
         
         assert response.status_code == 422
     
-    def test_null_query_rejected(self):
+    @pytest.mark.asyncio
+    async def test_null_query_rejected(self, client):
         """Test that null query value is rejected."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": None
@@ -210,9 +224,10 @@ class TestQueryValidationEndpoint:
             RouterErrorCode.INVALID_QUERY.value
         ]
     
-    def test_conversation_id_case_insensitive(self):
+    @pytest.mark.asyncio
+    async def test_conversation_id_case_insensitive(self, client):
         """Test that conversation ID is case-insensitive and normalized."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "test query",
@@ -225,11 +240,12 @@ class TestQueryValidationEndpoint:
         # Should be normalized to lowercase
         assert data["conversation_id"] == "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
     
-    def test_correlation_id_included_in_response(self):
+    @pytest.mark.asyncio
+    async def test_correlation_id_included_in_response(self, client):
         """Test that correlation ID is included in response if provided."""
         correlation_id = "test-correlation-123"
         
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={"query": "test"},
             headers={"X-Correlation-ID": correlation_id}
@@ -292,9 +308,10 @@ class TestValidationErrorMapping:
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
     
-    def test_unicode_characters_in_query(self):
+    @pytest.mark.asyncio
+    async def test_unicode_characters_in_query(self, client):
         """Test that unicode characters are accepted."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "Show me データ for 用户 with émojis 🎉"
@@ -306,9 +323,10 @@ class TestEdgeCases:
         assert "データ" in data["query"]
         assert "🎉" in data["query"]
     
-    def test_special_characters_in_query(self):
+    @pytest.mark.asyncio
+    async def test_special_characters_in_query(self, client):
         """Test that special SQL characters are accepted (not filtered)."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "SELECT * FROM users WHERE name = 'O''Neill'"
@@ -319,9 +337,10 @@ class TestEdgeCases:
         data = response.json()
         assert "O''Neill" in data["query"]
     
-    def test_newlines_in_query(self):
+    @pytest.mark.asyncio
+    async def test_newlines_in_query(self, client):
         """Test that newlines in query are accepted."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "Show me sales\nfrom last month\nfor region 'North'"
@@ -332,9 +351,10 @@ class TestEdgeCases:
         data = response.json()
         assert "\n" in data["query"]
     
-    def test_empty_user_context_accepted(self):
+    @pytest.mark.asyncio
+    async def test_empty_user_context_accepted(self, client):
         """Test that empty user context is accepted."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "test",
@@ -344,9 +364,10 @@ class TestEdgeCases:
         
         assert response.status_code == 200
     
-    def test_partial_user_context_accepted(self):
+    @pytest.mark.asyncio
+    async def test_partial_user_context_accepted(self, client):
         """Test that partial user context is accepted."""
-        response = client.post(
+        response = await client.post(
             "/api/v1/query",
             json={
                 "query": "test",
@@ -362,17 +383,19 @@ class TestEdgeCases:
 class TestOpenAPIDocumentation:
     """Test OpenAPI documentation generation."""
     
-    def test_openapi_schema_includes_query_endpoint(self):
+    @pytest.mark.asyncio
+    async def test_openapi_schema_includes_query_endpoint(self, client):
         """Test that OpenAPI schema includes the query endpoint."""
-        response = client.get("/openapi.json")
+        response = await client.get("/openapi.json")
         
         assert response.status_code == 200
         schema = response.json()
         assert "/api/v1/query" in schema["paths"]
     
-    def test_query_endpoint_has_proper_documentation(self):
+    @pytest.mark.asyncio
+    async def test_query_endpoint_has_proper_documentation(self, client):
         """Test that query endpoint has proper OpenAPI documentation."""
-        response = client.get("/openapi.json")
+        response = await client.get("/openapi.json")
         schema = response.json()
         
         query_endpoint = schema["paths"]["/api/v1/query"]["post"]

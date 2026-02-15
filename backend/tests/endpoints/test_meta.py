@@ -16,28 +16,27 @@ import time
 # Add backend to path - MUST be before any project imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from main import app
 from config import settings
 
 
-@pytest.fixture
-def client():
-    """Create a test client."""
-    return TestClient(app)
+# Note: client fixture is provided by tests/conftest.py
 
 
 class TestVersionEndpoint:
     """Tests for the /api/v1/version endpoint."""
     
-    def test_version_endpoint_exists(self, client):
+    @pytest.mark.asyncio
+    async def test_version_endpoint_exists(self, client):
         """Test that the version endpoint is accessible."""
-        response = client.get("/api/v1/version")
+        response = await client.get("/api/v1/version")
         assert response.status_code == 200
     
-    def test_version_response_structure(self, client):
+    @pytest.mark.asyncio
+    async def test_version_response_structure(self, client):
         """Test that version response has correct structure."""
-        response = client.get("/api/v1/version")
+        response = await client.get("/api/v1/version")
         data = response.json()
         
         # Check required fields exist
@@ -47,9 +46,10 @@ class TestVersionEndpoint:
         assert "build_date" in data
         assert "app_name" in data
     
-    def test_version_values(self, client):
+    @pytest.mark.asyncio
+    async def test_version_values(self, client):
         """Test that version values are correct."""
-        response = client.get("/api/v1/version")
+        response = await client.get("/api/v1/version")
         data = response.json()
         
         # Check version format
@@ -66,23 +66,26 @@ class TestVersionEndpoint:
         # Check app name matches config
         assert data["app_name"] == settings.app_name
     
-    def test_version_returns_json(self, client):
+    @pytest.mark.asyncio
+    async def test_version_returns_json(self, client):
         """Test that version endpoint returns JSON."""
-        response = client.get("/api/v1/version")
+        response = await client.get("/api/v1/version")
         assert response.headers["content-type"] == "application/json"
 
 
 class TestStatusEndpoint:
     """Tests for the /api/v1/status endpoint."""
     
-    def test_status_endpoint_exists(self, client):
+    @pytest.mark.asyncio
+    async def test_status_endpoint_exists(self, client):
         """Test that the status endpoint is accessible."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         assert response.status_code == 200
     
-    def test_status_response_structure(self, client):
+    @pytest.mark.asyncio
+    async def test_status_response_structure(self, client):
         """Test that status response has correct structure."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         data = response.json()
         
         # Check required fields exist
@@ -93,9 +96,10 @@ class TestStatusEndpoint:
         assert "endpoints" in data
         assert "features" in data
     
-    def test_status_values(self, client):
+    @pytest.mark.asyncio
+    async def test_status_values(self, client):
         """Test that status values are correct."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         data = response.json()
         
         # Check status is operational
@@ -113,9 +117,10 @@ class TestStatusEndpoint:
         assert isinstance(data["uptime_human"], str)
         assert len(data["uptime_human"]) > 0
     
-    def test_status_endpoints(self, client):
+    @pytest.mark.asyncio
+    async def test_status_endpoints(self, client):
         """Test that endpoint status information is present."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         data = response.json()
         
         endpoints = data["endpoints"]
@@ -130,9 +135,10 @@ class TestStatusEndpoint:
         assert endpoints["connections"] == "operational"
         assert endpoints["meta"] == "operational"
     
-    def test_status_features(self, client):
+    @pytest.mark.asyncio
+    async def test_status_features(self, client):
         """Test that feature flags are present."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         data = response.json()
         
         features = data["features"]
@@ -149,22 +155,24 @@ class TestStatusEndpoint:
         assert features["rate_limiting"] == settings.rate_limit_enabled
         assert features["circuit_breaker"] == settings.circuit_breaker_enabled
     
-    def test_status_returns_json(self, client):
+    @pytest.mark.asyncio
+    async def test_status_returns_json(self, client):
         """Test that status endpoint returns JSON."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         assert response.headers["content-type"] == "application/json"
     
-    def test_uptime_increases(self, client):
+    @pytest.mark.asyncio
+    async def test_uptime_increases(self, client):
         """Test that uptime increases between requests."""
         # Get initial uptime
-        response1 = client.get("/api/v1/status")
+        response1 = await client.get("/api/v1/status")
         uptime1 = response1.json()["uptime_seconds"]
         
         # Wait a moment
         time.sleep(0.1)
         
         # Get uptime again
-        response2 = client.get("/api/v1/status")
+        response2 = await client.get("/api/v1/status")
         uptime2 = response2.json()["uptime_seconds"]
         
         # Uptime should be greater or equal (may be same if requests are very fast)
@@ -174,9 +182,10 @@ class TestStatusEndpoint:
 class TestUptimeFormatting:
     """Tests for uptime formatting helper."""
     
-    def test_uptime_format_seconds(self, client):
+    @pytest.mark.asyncio
+    async def test_uptime_format_seconds(self, client):
         """Test uptime formatting for seconds."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         data = response.json()
         
         uptime_human = data["uptime_human"]
@@ -184,9 +193,10 @@ class TestUptimeFormatting:
         # Should contain time units
         assert any(unit in uptime_human for unit in ['s', 'm', 'h', 'd'])
     
-    def test_multiple_status_calls_consistent(self, client):
+    @pytest.mark.asyncio
+    async def test_multiple_status_calls_consistent(self, client):
         """Test that multiple status calls return consistent structure."""
-        responses = [client.get("/api/v1/status") for _ in range(3)]
+        responses = [await client.get("/api/v1/status") for _ in range(3)]
         
         # All should succeed
         assert all(r.status_code == 200 for r in responses)
@@ -199,9 +209,10 @@ class TestUptimeFormatting:
 class TestMetaEndpointsInDocs:
     """Tests for meta endpoints appearing in API documentation."""
     
-    def test_meta_endpoints_in_openapi(self, client):
+    @pytest.mark.asyncio
+    async def test_meta_endpoints_in_openapi(self, client):
         """Test that meta endpoints appear in OpenAPI schema."""
-        response = client.get("/openapi.json")
+        response = await client.get("/openapi.json")
         openapi_schema = response.json()
         
         # Check version endpoint exists
@@ -210,9 +221,10 @@ class TestMetaEndpointsInDocs:
         # Check status endpoint exists
         assert "/api/v1/status" in openapi_schema["paths"]
     
-    def test_meta_tag_exists(self, client):
+    @pytest.mark.asyncio
+    async def test_meta_tag_exists(self, client):
         """Test that Meta tag exists in OpenAPI schema."""
-        response = client.get("/openapi.json")
+        response = await client.get("/openapi.json")
         openapi_schema = response.json()
         
         # Check Meta tag is defined
@@ -225,9 +237,10 @@ class TestMetaEndpointsInDocs:
 class TestMetaEndpointsSecurity:
     """Tests for security aspects of meta endpoints."""
     
-    def test_version_no_credentials_exposed(self, client):
+    @pytest.mark.asyncio
+    async def test_version_no_credentials_exposed(self, client):
         """Test that version endpoint doesn't expose credentials."""
-        response = client.get("/api/v1/version")
+        response = await client.get("/api/v1/version")
         data = response.json()
         
         # Convert to string and check for sensitive keywords
@@ -237,9 +250,10 @@ class TestMetaEndpointsSecurity:
         assert "secret" not in response_str
         assert "key" not in response_str
     
-    def test_status_no_credentials_exposed(self, client):
+    @pytest.mark.asyncio
+    async def test_status_no_credentials_exposed(self, client):
         """Test that status endpoint doesn't expose credentials."""
-        response = client.get("/api/v1/status")
+        response = await client.get("/api/v1/status")
         data = response.json()
         
         # Convert to string and check for sensitive keywords
