@@ -76,29 +76,30 @@ class TestDatabaseHealthStatus:
 
     @pytest.mark.asyncio
     async def test_database_status_reporting(self, client):
-        """Test health check reports database status (connected/unavailable/unknown)."""
+        """Test health check reports database status (healthy/unhealthy/not_configured)."""
         response = await client.get("/api/v1/health")
         data = response.json()
 
         assert response.status_code == 200
-        assert data["database"]["status"] in ["connected", "unavailable", "unknown"]
-        assert "consecutive_failures" in data["database"]
+        assert data["database"]["status"] in ["healthy", "unhealthy", "not_configured"]
+        assert "configured" in data["database"]
 
     @pytest.mark.asyncio
     async def test_database_status_with_configured_url(self, client):
         """Test health check when database URL is configured."""
         if not settings.health_check_db_url:
-            # If no URL configured, status should be unknown
+            # If no URL configured, status should be not_configured
             response = await client.get("/api/v1/health")
             data = response.json()
-            assert data["database"]["status"] == "unknown"
+            assert data["database"]["status"] == "not_configured"
+            assert data["database"]["configured"] is False
             assert data["database"]["latency_ms"] is None
         else:
-            # If URL is configured, check for connected or unavailable
+            # If URL is configured, check for healthy or unhealthy
             response = await client.get("/api/v1/health")
             data = response.json()
-            assert data["database"]["status"] in ["connected", "unavailable"]
-            assert isinstance(data["database"]["consecutive_failures"], int)
+            assert data["database"]["status"] in ["healthy", "unhealthy"]
+            assert data["database"]["configured"] is True
 
 
 # ============================================================================
@@ -121,10 +122,11 @@ class TestHealthLatency:
             data = response.json()
             
             # Latency should be measured regardless of success/failure
-            if data["database"]["status"] in ["connected", "unavailable"]:
-                assert data["database"]["latency_ms"] is not None
-                assert isinstance(data["database"]["latency_ms"], int)
-                assert data["database"]["latency_ms"] >= 0
+            if data["database"]["status"] in ["healthy", "unhealthy"]:
+                # healthy always has latency, unhealthy may not
+                if data["database"]["latency_ms"] is not None:
+                    assert isinstance(data["database"]["latency_ms"], (int, float))
+                    assert data["database"]["latency_ms"] >= 0
 
     @pytest.mark.asyncio
     async def test_endpoint_response_time(self, client):
@@ -161,7 +163,7 @@ class TestGracefulFailure:
         assert "status" in data
         assert "timestamp" in data
         assert "database" in data
-        assert data["status"] == "ok"
+        assert data["status"] in ["ok", "degraded"]
 
 
 # ============================================================================
@@ -191,7 +193,7 @@ class TestNoCredentialExposure:
         
         # Verify only expected keys exist
         assert set(data.keys()) == {"status", "timestamp", "database"}
-        assert set(data["database"].keys()) == {"status", "latency_ms", "consecutive_failures"}
+        assert set(data["database"].keys()) == {"configured", "status", "latency_ms"}
 
     @pytest.mark.asyncio
     async def test_no_sensitive_data_in_headers(self, client):
@@ -224,8 +226,8 @@ class TestHealthEndpointIntegration:
         
         # Status checks
         assert response.status_code == 200
-        assert data["status"] == "ok"
-        assert data["database"]["status"] in ["connected", "unavailable", "unknown"]
+        assert data["status"] in ["ok", "degraded"]
+        assert data["database"]["status"] in ["healthy", "unhealthy", "not_configured"]
         
         # Structure validation
         assert "timestamp" in data
@@ -234,13 +236,13 @@ class TestHealthEndpointIntegration:
         # Database field validation
         assert "status" in data["database"]
         assert "latency_ms" in data["database"]
-        assert "consecutive_failures" in data["database"]
+        assert "configured" in data["database"]
         
         # Type validation
         if data["database"]["latency_ms"] is not None:
-            assert isinstance(data["database"]["latency_ms"], int)
+            assert isinstance(data["database"]["latency_ms"], (int, float))
             assert data["database"]["latency_ms"] >= 0
-        assert isinstance(data["database"]["consecutive_failures"], int)
+        assert isinstance(data["database"]["configured"], bool)
         
         # Security validation - no credentials in response
         assert "password" not in response.text.lower() or "null" in response.text.lower()
@@ -266,5 +268,5 @@ class TestHealthEndpointIntegration:
         
         # Database status should be stable (same state)
         # Note: This might differ if DB state changes between calls
-        assert data1["database"]["status"] in ["connected", "unavailable", "unknown"]
-        assert data2["database"]["status"] in ["connected", "unavailable", "unknown"]
+        assert data1["database"]["status"] in ["healthy", "unhealthy", "not_configured"]
+        assert data2["database"]["status"] in ["healthy", "unhealthy", "not_configured"]

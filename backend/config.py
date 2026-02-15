@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, ValidationError
 from pathlib import Path
@@ -16,21 +17,19 @@ class Settings(BaseSettings):
     
     All sensitive configuration must be provided via environment variables.
     The .env file is loaded automatically for development convenience.
+    
+    Environment-aware behavior:
+    - Development/CI: Flexible defaults, loads .env file
+    - Production: Strict validation, required security config
     """
-    model_config = SettingsConfigDict(
-        env_file=str(ENV_FILE), 
-        env_file_encoding='utf-8',
-        # Don't ignore extra fields - helps catch typos in .env
-        extra='forbid'
-    )
     
     # Application Settings
     app_name: str = "SequelSpeak Backend"
-    environment: str 
+    environment: str = "development"
     
     # Security Settings
     secret_key: Optional[str] = None  # Required in production for session/JWT
-    allowed_origins: str  # Comma-separated CORS origins
+    allowed_origins: str = "http://localhost:3000,http://localhost:5173"
     
     # Database Settings
     db_connection_timeout: int = 10  # Database connection timeout in seconds
@@ -78,8 +77,9 @@ class Settings(BaseSettings):
     redis_timeout: int = 5  # Redis connection timeout in seconds
     conversation_state_ttl: int = 86400  # Conversation state TTL in seconds (24 hours)
 
+    # Pydantic v2 configuration
     model_config = SettingsConfigDict(
-        env_file=".env" if os.getenv("ENVIRONMENT") != "production" else None,
+        env_file=str(ENV_FILE) if os.getenv("ENVIRONMENT", "development") != "production" else None,
         env_file_encoding='utf-8',
         extra='forbid'
     )
@@ -339,6 +339,29 @@ def load_settings() -> Settings:
         raise
 
 
-# Singleton instance - load on module import
-# This will fail fast if configuration is invalid
-settings = load_settings()
+@lru_cache
+def get_settings() -> Settings:
+    """
+    Get cached Settings instance (lazy-loaded singleton).
+    
+    This function uses @lru_cache to ensure Settings is instantiated only once.
+    Prevents import-time crashes and allows testing with different configurations.
+    
+    Usage:
+        from config import get_settings
+        settings = get_settings()
+    """
+    return load_settings()
+
+
+# For backward compatibility - use get_settings() instead
+# This allows existing code to work while migrating to lazy loading
+def __getattr__(name: str) -> Any:
+    """
+    Module-level __getattr__ for backward compatibility.
+    
+    Allows `from config import settings` to work by lazily loading settings.
+    """
+    if name == "settings":
+        return get_settings()
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
