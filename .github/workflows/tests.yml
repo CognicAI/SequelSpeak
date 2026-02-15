@@ -14,6 +14,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
@@ -39,7 +41,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Cache dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
@@ -55,9 +57,22 @@ jobs:
       - name: Run tests with coverage
         working-directory: ./backend
         env:
-          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: development
+          ALLOWED_ORIGINS: "*"
+          SECRET_KEY: test-secret-key-for-github-actions
+          REDIS_ENABLED: "True"
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          REDIS_DB: 0
         run: |
-          pytest -v --cov=services --cov=api --cov=utils --cov-report=xml --cov-report=html --cov-report=term-missing
+          pytest -v \
+            --cov=services \
+            --cov=api \
+            --cov=utils \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            --cov-fail-under=85
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -66,8 +81,7 @@ jobs:
           flags: unittests
           name: codecov-${{ matrix.python-version }}
           fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Generate coverage badge
         if: matrix.python-version == '3.12' && github.ref == 'refs/heads/main'
@@ -94,12 +108,10 @@ jobs:
           path: backend/htmlcov/
           retention-days: 30
 
-      - name: Upload test results
+      - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.python-version }}
-          path: |
-            backend/.pytest_cache/
-            backend/coverage.xml
+          path: backend/coverage.xml
           retention-days: 30
