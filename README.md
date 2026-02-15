@@ -1,11 +1,11 @@
 # SequelSpeak
 
-<!-- Replace YOUR_USERNAME with your GitHub username in the badge URLs below -->
-[![Backend Tests](https://github.com/YOUR_USERNAME/SequelSpeak/actions/workflows/tests.yml/badge.svg)](https://github.com/YOUR_USERNAME/SequelSpeak/actions/workflows/tests.yml)
-[![codecov](https://codecov.io/gh/YOUR_USERNAME/SequelSpeak/branch/main/graph/badge.svg)](https://codecov.io/gh/YOUR_USERNAME/SequelSpeak)
+[![Backend Tests](https://github.com/cognicai/SequelSpeak/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/cognicai/SequelSpeak/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/cognicai/SequelSpeak/branch/main/graph/badge.svg)](https://codecov.io/gh/cognicai/SequelSpeak)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-009688.svg)](https://fastapi.tiangolo.com)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 
 An agentic, schema-aware Text-to-SQL system that converts natural language to safe, validated SQL for PostgreSQL.
 
