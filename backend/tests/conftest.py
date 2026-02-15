@@ -37,7 +37,7 @@ async def reset_conversation_state():
 
 
 @pytest.fixture
-async def client():
+async def client(reset_conversation_state):
     """
     Provide an async test client for each test.
     
@@ -45,6 +45,7 @@ async def client():
     for each test to ensure test isolation.
     
     Note: ASGITransport with app triggers lifespan events by default.
+    Depends on reset_conversation_state to ensure proper initialization order.
     """
     # Create transport with raise_app_exceptions=False to match test expectations
     transport = ASGITransport(app=app, raise_app_exceptions=False)

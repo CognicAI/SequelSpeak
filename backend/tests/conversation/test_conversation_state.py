@@ -35,6 +35,8 @@ from config import settings
 async def clean_manager():
     """Provide a clean conversation state manager for each test."""
     manager = ConversationStateManager()
+    # Ensure clean state before initialization
+    await manager.close()
     await manager.initialize()
     
     yield manager
@@ -57,6 +59,8 @@ async def redis_manager():
         pytest.skip("Redis is disabled in configuration")
     
     manager = ConversationStateManager()
+    # Ensure clean state before initialization
+    await manager.close()
     await manager.initialize()
     
     if not manager.is_redis_enabled:
@@ -77,6 +81,8 @@ async def memory_manager():
     settings.redis_enabled = False
     
     manager = ConversationStateManager()
+    # Ensure clean state before initialization
+    await manager.close()
     await manager.initialize()
     
     yield manager

@@ -16,19 +16,22 @@ Features:
 import logging
 import json
 import uuid
+import asyncio
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
-from contextlib import asynccontextmanager
+from typing import Optional, Dict, Any, TYPE_CHECKING
 
 try:
     import redis.asyncio as redis
     from redis.exceptions import RedisError, ConnectionError as RedisConnectionError
     REDIS_AVAILABLE = True
 except ImportError:
-    REDIS_AVAILABLE = False
-    redis = None
-    RedisError = Exception
-    RedisConnectionError = Exception
+    redis = None  # type: ignore
+    RedisError = Exception  # type: ignore
+    RedisConnectionError = Exception  # type: ignore
+    REDIS_AVAILABLE = False  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 
 from config import settings
 
@@ -129,11 +132,12 @@ class ConversationStateManager:
     
     def __init__(self):
         """Initialize the conversation state manager."""
-        self._redis_client: Optional[redis.Redis] = None
+        self._redis_client: Optional['Redis'] = None
         self._in_memory_store: Dict[str, ConversationState] = {}
         self._initialized = False
         self._use_redis = settings.redis_enabled and REDIS_AVAILABLE
         self._redis_url: Optional[str] = None
+        self._loop_id: Optional[int] = None  # Track which loop owns the Redis client
         
         if settings.redis_enabled and not REDIS_AVAILABLE:
             logger.warning(
@@ -175,16 +179,40 @@ class ConversationStateManager:
     async def _ensure_redis_client(self) -> None:
         """
         Ensure Redis client exists and is bound to the current event loop.
-        Creates a new client if needed.
+        Creates a new client if needed or if event loop has changed.
         """
         if not self._use_redis or not self._redis_url:
             return
         
-        # If client doesn't exist, create it
-        if self._redis_client is None:
+        # Get current event loop ID
+        try:
+            current_loop = asyncio.get_running_loop()
+            current_loop_id = id(current_loop)
+        except RuntimeError:
+            # No running loop
+            return
+        
+        # Check if client exists and is bound to current loop
+        needs_new_client = (
+            self._redis_client is None or
+            self._loop_id != current_loop_id
+        )
+        
+        # If client exists but wrong loop, close it first
+        if self._redis_client and self._loop_id != current_loop_id:
+            try:
+                await self._redis_client.aclose()
+                logger.debug(f"Closed Redis client from old event loop")
+            except Exception as e:
+                logger.warning(f"Error closing old Redis client: {e}")
+            finally:
+                self._redis_client = None
+        
+        # Create new client if needed
+        if needs_new_client:
             try:
                 # Create Redis client bound to current event loop
-                self._redis_client = redis.from_url(
+                self._redis_client = redis.from_url(  # type: ignore[union-attr]
                     self._redis_url,
                     encoding="utf-8",
                     decode_responses=True,
@@ -194,26 +222,31 @@ class ConversationStateManager:
                 )
                 
                 # Test connection
-                await self._redis_client.ping()
+                await self._redis_client.ping()  # type: ignore[union-attr]
+                
+                # Store the loop ID
+                self._loop_id = current_loop_id
                 
                 # Mask password in logs
                 safe_url = self._redis_url.replace(settings.redis_password or "", "***") if settings.redis_password else self._redis_url
-                logger.info(f"Connected to Redis: {safe_url}")
+                logger.info(f"Connected to Redis: {safe_url} (loop_id: {current_loop_id})")
                 logger.info(f"Conversation TTL: {settings.conversation_state_ttl}s")
                 
-            except (RedisConnectionError, RedisError) as e:
+            except (RedisConnectionError, RedisError) as e:  # type: ignore[misc]
                 logger.error(
-                    f"Failed to connect to Redis: {e.__class__.__name__}: {str(e)}. "
+                    f"Failed to connect to Redis: {e.__class__.__name__}: {str(e)}. "  # type: ignore[misc]
                     f"Falling back to in-memory storage."
                 )
                 self._redis_client = None
+                self._loop_id = None
                 self._use_redis = False
-            except Exception as e:
+            except Exception as e:  # type: ignore[unreachable]
                 logger.error(
                     f"Unexpected error initializing Redis: {e.__class__.__name__}: {str(e)}. "
                     f"Falling back to in-memory storage."
                 )
                 self._redis_client = None
+                self._loop_id = None
                 self._use_redis = False
     
     async def close(self) -> None:
@@ -231,6 +264,7 @@ class ConversationStateManager:
                 logger.error(f"Error closing Redis connection: {e}")
             finally:
                 self._redis_client = None
+                self._loop_id = None
         
         self._in_memory_store.clear()
         self._initialized = False
@@ -324,7 +358,7 @@ class ConversationStateManager:
                 
                 return None
             
-            except (RedisError, json.JSONDecodeError) as e:
+            except (RedisError, json.JSONDecodeError) as e:  # type: ignore[misc]
                 logger.error(
                     f"Error retrieving conversation {conversation_id} from Redis: {e}. "
                     f"Falling back to in-memory."
@@ -425,11 +459,11 @@ class ConversationStateManager:
                 # Find all conversation keys
                 pattern = self._get_redis_key("*")
                 keys = []
-                async for key in self._redis_client.scan_iter(match=pattern):
-                    keys.append(key)
+                async for key in self._redis_client.scan_iter(match=pattern):  # type: ignore[misc]
+                    keys.append(key)  # type: ignore[arg-type]
                 
                 if keys:
-                    deleted = await self._redis_client.delete(*keys)
+                    deleted = await self._redis_client.delete(*keys)  # type: ignore[arg-type]
                     logger.warning(f"Cleared {deleted} conversations from Redis")
                     return deleted
                 
