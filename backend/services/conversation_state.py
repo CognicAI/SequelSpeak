@@ -133,6 +133,7 @@ class ConversationStateManager:
         self._in_memory_store: Dict[str, ConversationState] = {}
         self._initialized = False
         self._use_redis = settings.redis_enabled and REDIS_AVAILABLE
+        self._redis_url: Optional[str] = None
         
         if settings.redis_enabled and not REDIS_AVAILABLE:
             logger.warning(
@@ -145,24 +146,46 @@ class ConversationStateManager:
         Initialize the state manager and establish connections.
         
         Call this once during application startup (in lifespan context).
+        Creates Redis client lazily bound to the current event loop.
         """
         if self._initialized:
             logger.warning("ConversationStateManager already initialized")
             return
         
         if self._use_redis:
+            # Build Redis connection URL
+            password_part = f":{settings.redis_password}@" if settings.redis_password else ""
+            protocol = "rediss" if settings.redis_ssl else "redis"
+            self._redis_url = (
+                f"{protocol}://{password_part}{settings.redis_host}:"
+                f"{settings.redis_port}/{settings.redis_db}"
+            )
+            
+            # Create Redis client lazily to bind to current event loop
+            await self._ensure_redis_client()
+        
+        if not self._use_redis:
+            logger.warning(
+                "Using in-memory conversation state storage. "
+                "State will be lost on restart and not shared across instances."
+            )
+        
+        self._initialized = True
+    
+    async def _ensure_redis_client(self) -> None:
+        """
+        Ensure Redis client exists and is bound to the current event loop.
+        Creates a new client if needed.
+        """
+        if not self._use_redis or not self._redis_url:
+            return
+        
+        # If client doesn't exist, create it
+        if self._redis_client is None:
             try:
-                # Build Redis connection URL
-                password_part = f":{settings.redis_password}@" if settings.redis_password else ""
-                protocol = "rediss" if settings.redis_ssl else "redis"
-                redis_url = (
-                    f"{protocol}://{password_part}{settings.redis_host}:"
-                    f"{settings.redis_port}/{settings.redis_db}"
-                )
-                
-                # Create Redis client with connection pool
+                # Create Redis client bound to current event loop
                 self._redis_client = redis.from_url(
-                    redis_url,
+                    self._redis_url,
                     encoding="utf-8",
                     decode_responses=True,
                     socket_timeout=settings.redis_timeout,
@@ -174,7 +197,7 @@ class ConversationStateManager:
                 await self._redis_client.ping()
                 
                 # Mask password in logs
-                safe_url = redis_url.replace(settings.redis_password or "", "***") if settings.redis_password else redis_url
+                safe_url = self._redis_url.replace(settings.redis_password or "", "***") if settings.redis_password else self._redis_url
                 logger.info(f"Connected to Redis: {safe_url}")
                 logger.info(f"Conversation TTL: {settings.conversation_state_ttl}s")
                 
@@ -192,20 +215,13 @@ class ConversationStateManager:
                 )
                 self._redis_client = None
                 self._use_redis = False
-        
-        if not self._use_redis:
-            logger.warning(
-                "Using in-memory conversation state storage. "
-                "State will be lost on restart and not shared across instances."
-            )
-        
-        self._initialized = True
     
     async def close(self) -> None:
         """
         Close connections and cleanup resources.
         
         Call this during application shutdown (in lifespan context).
+        Resets Redis client to None to allow recreation in new event loop.
         """
         if self._redis_client:
             try:
@@ -213,6 +229,8 @@ class ConversationStateManager:
                 logger.info("Redis connection closed")
             except Exception as e:
                 logger.error(f"Error closing Redis connection: {e}")
+            finally:
+                self._redis_client = None
         
         self._in_memory_store.clear()
         self._initialized = False
@@ -292,6 +310,9 @@ class ConversationStateManager:
         Returns:
             ConversationState if found, None otherwise
         """
+        if self._use_redis:
+            await self._ensure_redis_client()
+            
         if self._use_redis and self._redis_client:
             try:
                 key = self._get_redis_key(conversation_id)
@@ -322,6 +343,9 @@ class ConversationStateManager:
         Args:
             state: ConversationState to store
         """
+        if self._use_redis:
+            await self._ensure_redis_client()
+            
         if self._use_redis and self._redis_client:
             try:
                 key = self._get_redis_key(state.conversation_id)
@@ -359,6 +383,9 @@ class ConversationStateManager:
         Returns:
             True if conversation existed and was cleared, False otherwise
         """
+        if self._use_redis:
+            await self._ensure_redis_client()
+            
         if self._use_redis and self._redis_client:
             try:
                 key = self._get_redis_key(conversation_id)
@@ -390,6 +417,9 @@ class ConversationStateManager:
         Returns:
             Number of conversations cleared
         """
+        if self._use_redis:
+            await self._ensure_redis_client()
+            
         if self._use_redis and self._redis_client:
             try:
                 # Find all conversation keys

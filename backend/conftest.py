@@ -89,6 +89,25 @@ def mock_invalid_signature_jwt():
     return jwt.encode(payload, wrong_secret, algorithm="HS256")
 
 
+@pytest.fixture(autouse=True)
+async def reset_conversation_state():
+    """
+    Reset conversation state manager before and after each test.
+    
+    This ensures Redis clients are properly closed and recreated
+    in the current event loop, preventing 'Future attached to different loop' errors.
+    """
+    from services.conversation_state import conversation_state_manager
+    
+    # Close any existing Redis connection before test
+    await conversation_state_manager.close()
+    
+    yield
+    
+    # Close connection after test for cleanup
+    await conversation_state_manager.close()
+
+
 @pytest.fixture
 def auth_headers(mock_valid_jwt) -> Dict[str, str]:
     """
