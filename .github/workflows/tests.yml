@@ -2,18 +2,16 @@ name: Backend Tests
 
 on:
   push:
-    branches: [main, develop]
     paths:
       - "backend/**"
       - ".github/workflows/tests.yml"
   pull_request:
-    branches: [main, develop]
     paths:
       - "backend/**"
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
 
     strategy:
