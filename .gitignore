@@ -97,3 +97,5 @@ Thumbs.db
 temp/
 
 .github/copilot-instructions.md
+pdf_generator/
+.github/agents/
