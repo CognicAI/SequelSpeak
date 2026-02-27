@@ -79,7 +79,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: cognicai/SequelSpeak
-          file: ./backend/coverage.xml
+          files: ./backend/coverage.xml
           flags: unittests
           name: codecov-${{ matrix.python-version }}
           fail_ci_if_error: false
