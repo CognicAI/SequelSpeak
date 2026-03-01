@@ -94,4 +94,29 @@ describe('useProfileSelection', () => {
         expect(result.current.error).toBe('Storage failure');
         expect(result.current.profiles).toEqual([]);
     });
+
+    it('clears activeProfileId when the active profile is absent after reload', () => {
+        // Start with one profile and select it.
+        const profile = makeProfile();
+        let availableProfiles: ConnectionProfile[] = [profile];
+        const adapter: ProfileAdapter = {
+            getProfiles: () => availableProfiles,
+            getProfileById: (id) => availableProfiles.find(p => p.id === id),
+        };
+
+        const { result } = renderHook(() => useProfileSelection({ adapter }));
+
+        act(() => { result.current.selectProfile(profile.id); });
+        expect(result.current.activeProfileId).toBe(profile.id);
+
+        // Simulate the profile being removed from the underlying data source.
+        availableProfiles = [];
+
+        // Trigger a reload — loadProfiles now returns an empty list.
+        act(() => { result.current.refreshProfiles(); });
+
+        // The cleanup effect detects the active profile is gone and nulls the ID.
+        expect(result.current.activeProfileId).toBeNull();
+        expect(result.current.profiles).toHaveLength(0);
+    });
 });

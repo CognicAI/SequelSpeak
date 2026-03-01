@@ -10,6 +10,7 @@ import { useProfileSelection } from '../hooks/useProfileSelection';
 import type { ConnectionProfile } from '../types/profile';
 import { saveProfile } from '../services/profileStorage';
 import { VALIDATION } from '../constants/validation';
+import { UI } from '../constants/ui';
 import { apiClient } from '../services/api/client';
 import { ApiError } from '../services/api/errors';
 
@@ -78,12 +79,12 @@ export function ConnectionForm() {
         onProfileClear: clearFormFields,
     });
 
-    const [isValid, setIsValid] = useState<boolean | null>(null);
+    const [isValid,  setIsValid] = useState<boolean | null>(null);
     const [error, setError] = useState('');
     const [isFocused, setIsFocused] = useState(false);
 
     // Regex for basic PostgreSQL connection string validation
-    const postgresRegex = /^postgres(?:ql)?:\/\/(?:[^:@]+)(?::[^:@]*)?@(?:[^:@\/]+)(?::\d+)?\/[^:@\/]+$/;
+    const postgresRegex = /^postgres(?:ql)?:\/\/(?:[^:@]+)(?::[^:@]*)?@(?:[^:@/]+)(?::\d+)?\/[^:@/]+$/;
 
     const validateUrl = (value: string) => {
         if (!value) {
@@ -112,7 +113,7 @@ export function ConnectionForm() {
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
         return (url: string) => {
             if (timeoutId !== null) clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => validateUrl(url), 300);
+            timeoutId = setTimeout(() => validateUrl(url), UI.DEBOUNCE_DELAY);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -420,7 +421,7 @@ export function ConnectionForm() {
                                         onChange={setHost}
                                         icon={Server}
                                         placeholder="localhost"
-                                        validate={(v) => /^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])(\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]))*$|^localhost$/.test(v)}
+                                        validate={(v) => /^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])(\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]))*$|^localhost$/.test(v)}
                                         disabled={isLoading}
                                     />
                                     <FormField
