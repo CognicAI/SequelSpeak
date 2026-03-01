@@ -82,6 +82,12 @@ export function ProfileSelector({
 
     // Handle keyboard navigation
     const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
+        // Resolve listbox items once so all navigation cases share the same query.
+        const listboxItems = (): HTMLElement[] => {
+            const listbox = dropdownRef.current?.querySelector('[role="listbox"]');
+            return Array.from(listbox?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+        };
+
         switch (event.key) {
             case 'Escape':
                 setIsOpen(false);
@@ -97,38 +103,30 @@ export function ProfileSelector({
             case 'ArrowDown': {
                 event.preventDefault();
                 if (!isOpen) { setIsOpen(true); break; }
-                // Move focus to the next profile button
-                const listbox = dropdownRef.current?.querySelector('[role="listbox"]');
-                const items = Array.from(listbox?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
-                const current = document.activeElement;
-                const idx = items.indexOf(current as HTMLElement);
+                const items = listboxItems();
+                const idx = items.indexOf(document.activeElement as HTMLElement);
                 items[idx + 1 < items.length ? idx + 1 : 0]?.focus();
                 break;
             }
             case 'ArrowUp': {
                 event.preventDefault();
                 if (!isOpen) break;
-                const listbox2 = dropdownRef.current?.querySelector('[role="listbox"]');
-                const items2 = Array.from(listbox2?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
-                const current2 = document.activeElement;
-                const idx2 = items2.indexOf(current2 as HTMLElement);
-                items2[idx2 - 1 >= 0 ? idx2 - 1 : items2.length - 1]?.focus();
+                const items = listboxItems();
+                const idx = items.indexOf(document.activeElement as HTMLElement);
+                items[idx - 1 >= 0 ? idx - 1 : items.length - 1]?.focus();
                 break;
             }
             case 'Home': {
                 event.preventDefault();
                 if (!isOpen) break;
-                const listbox3 = dropdownRef.current?.querySelector('[role="listbox"]');
-                const first = listbox3?.querySelector<HTMLElement>('[role="option"]');
-                first?.focus();
+                listboxItems()[0]?.focus();
                 break;
             }
             case 'End': {
                 event.preventDefault();
                 if (!isOpen) break;
-                const listbox4 = dropdownRef.current?.querySelector('[role="listbox"]');
-                const items4 = Array.from(listbox4?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
-                items4[items4.length - 1]?.focus();
+                const items = listboxItems();
+                items[items.length - 1]?.focus();
                 break;
             }
         }
@@ -143,13 +141,13 @@ export function ProfileSelector({
     }, [onProfileSelect]);
 
     // Handle clear selection
-    const handleClear = useCallback((event: React.MouseEvent) => {
+    const handleClear = useCallback((event: React.SyntheticEvent) => {
         event.stopPropagation();
         onClearSelection?.();
     }, [onClearSelection]);
 
     // Handle delete button click - show confirmation and store trigger element for focus restoration
-    const handleDeleteClick = useCallback((event: React.MouseEvent | React.KeyboardEvent, profile: ConnectionProfile) => {
+    const handleDeleteClick = useCallback((event: React.SyntheticEvent, profile: ConnectionProfile) => {
         event.stopPropagation();
         deleteTriggerRef.current = event.currentTarget as HTMLElement;
         setProfileToDelete(profile);
@@ -192,7 +190,7 @@ export function ProfileSelector({
     }, [editingProfileId]);
 
     // Handle edit button click - enter edit mode
-    const handleEditClick = useCallback((event: React.MouseEvent, profile: ConnectionProfile) => {
+    const handleEditClick = useCallback((event: React.SyntheticEvent, profile: ConnectionProfile) => {
         event.stopPropagation();
         setEditingProfileId(profile.id);
         setEditName(profile.name);
@@ -321,7 +319,7 @@ export function ProfileSelector({
                         onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                handleClear(e as any);
+                                handleClear(e);
                             }
                         }}
                         className="p-0.5 rounded hover:bg-white/10 transition-colors cursor-pointer"
@@ -421,7 +419,7 @@ export function ProfileSelector({
                                             if (e.key === 'Enter' || e.key === ' ') {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                handleEditClick(e as any, profile);
+                                                handleEditClick(e, profile);
                                             }
                                         }}
                                         className="p-1.5 rounded hover:bg-white/10 transition-colors cursor-pointer opacity-0 group-hover/item:opacity-100 focus:opacity-100"
@@ -441,7 +439,7 @@ export function ProfileSelector({
                                             if (e.key === 'Enter' || e.key === ' ') {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                handleDeleteClick(e as any, profile);
+                                                handleDeleteClick(e, profile);
                                             }
                                         }}
                                         className="p-1.5 rounded hover:bg-red-500/20 transition-colors cursor-pointer opacity-0 group-hover/item:opacity-100 focus:opacity-100"
