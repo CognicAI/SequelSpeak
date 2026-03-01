@@ -57,6 +57,8 @@ export function ProfileSelector({
     const editInputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const buttonRef = useRef<HTMLButtonElement>(null);
+    // Tracks the delete-trigger button so focus is restored after modal dismiss (section 5.3)
+    const deleteTriggerRef = useRef<HTMLElement | null>(null);
 
     // Find active profile for display
     const activeProfile = activeProfileId
@@ -75,6 +77,7 @@ export function ProfileSelector({
             document.addEventListener('mousedown', handleClickOutside);
             return () => document.removeEventListener('mousedown', handleClickOutside);
         }
+        return undefined;
     }, [isOpen]);
 
     // Handle keyboard navigation
@@ -91,14 +94,46 @@ export function ProfileSelector({
                     setIsOpen(true);
                 }
                 break;
-            case 'ArrowDown':
+            case 'ArrowDown': {
                 event.preventDefault();
-                if (!isOpen) {
-                    setIsOpen(true);
-                }
+                if (!isOpen) { setIsOpen(true); break; }
+                // Move focus to the next profile button
+                const listbox = dropdownRef.current?.querySelector('[role="listbox"]');
+                const items = Array.from(listbox?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+                const current = document.activeElement;
+                const idx = items.indexOf(current as HTMLElement);
+                items[idx + 1 < items.length ? idx + 1 : 0]?.focus();
                 break;
+            }
+            case 'ArrowUp': {
+                event.preventDefault();
+                if (!isOpen) break;
+                const listbox2 = dropdownRef.current?.querySelector('[role="listbox"]');
+                const items2 = Array.from(listbox2?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+                const current2 = document.activeElement;
+                const idx2 = items2.indexOf(current2 as HTMLElement);
+                items2[idx2 - 1 >= 0 ? idx2 - 1 : items2.length - 1]?.focus();
+                break;
+            }
+            case 'Home': {
+                event.preventDefault();
+                if (!isOpen) break;
+                const listbox3 = dropdownRef.current?.querySelector('[role="listbox"]');
+                const first = listbox3?.querySelector<HTMLElement>('[role="option"]');
+                first?.focus();
+                break;
+            }
+            case 'End': {
+                event.preventDefault();
+                if (!isOpen) break;
+                const listbox4 = dropdownRef.current?.querySelector('[role="listbox"]');
+                const items4 = Array.from(listbox4?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+                items4[items4.length - 1]?.focus();
+                break;
+            }
         }
     }, [isOpen]);
+
 
     // Handle profile selection
     const handleSelect = useCallback((profileId: string) => {
@@ -113,9 +148,10 @@ export function ProfileSelector({
         onClearSelection?.();
     }, [onClearSelection]);
 
-    // Handle delete button click - show confirmation
-    const handleDeleteClick = useCallback((event: React.MouseEvent, profile: ConnectionProfile) => {
+    // Handle delete button click - show confirmation and store trigger element for focus restoration
+    const handleDeleteClick = useCallback((event: React.MouseEvent | React.KeyboardEvent, profile: ConnectionProfile) => {
         event.stopPropagation();
+        deleteTriggerRef.current = event.currentTarget as HTMLElement;
         setProfileToDelete(profile);
     }, []);
 
@@ -126,12 +162,17 @@ export function ProfileSelector({
             setIsOpen(false);
         }
         setProfileToDelete(null);
+        // Restore focus to the element that triggered the modal (section 5.3)
+        setTimeout(() => { deleteTriggerRef.current?.focus(); }, 0);
     }, [profileToDelete, onDeleteProfile]);
 
     // Handle delete cancellation
     const handleCancelDelete = useCallback(() => {
         setProfileToDelete(null);
+        // Restore focus to the element that triggered the modal (section 5.3)
+        setTimeout(() => { deleteTriggerRef.current?.focus(); }, 0);
     }, []);
+
 
     const focusTimeoutRef = useRef<number | null>(null);
 

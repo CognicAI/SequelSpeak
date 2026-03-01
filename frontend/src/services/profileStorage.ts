@@ -6,6 +6,7 @@
  */
 
 import type { ConnectionProfile } from '../types/profile';
+import { VALIDATION } from '../constants/validation';
 
 const STORAGE_KEY = 'sequel-speak-profiles';
 
@@ -39,24 +40,38 @@ export interface SaveProfileResult {
     isNew: boolean; // true if newly created, false if updated existing
 }
 
+/** UUID v4 regex used for `id` field validation */
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
- * Validates if the data structure matches ConnectionProfile interface
+ * Validates if the data structure matches ConnectionProfile interface.
+ * Checks both types and value constraints (UUID format, port range) to
+ * reject tampered or corrupted data from LocalStorage.
  */
 function isValidProfile(data: unknown): data is ConnectionProfile {
     if (!data || typeof data !== 'object') return false;
 
     const profile = data as Record<string, unknown>;
 
-    return (
-        typeof profile.id === 'string' &&
-        typeof profile.name === 'string' &&
-        typeof profile.host === 'string' &&
-        typeof profile.port === 'string' &&
-        typeof profile.username === 'string' &&
-        typeof profile.database === 'string' &&
-        typeof profile.createdAt === 'string' &&
-        (profile.lastUsed === undefined || typeof profile.lastUsed === 'string')
-    );
+    // Validate id is a UUID v4 string
+    if (typeof profile.id !== 'string' || !UUID_V4_REGEX.test(profile.id)) return false;
+
+    // Validate required string fields are non-empty strings
+    if (typeof profile.name !== 'string' || profile.name.trim().length === 0) return false;
+    if (typeof profile.host !== 'string' || profile.host.trim().length === 0) return false;
+    if (typeof profile.username !== 'string') return false;
+    if (typeof profile.database !== 'string' || profile.database.trim().length === 0) return false;
+    if (typeof profile.createdAt !== 'string') return false;
+
+    // Validate port is a numeric string within the valid TCP range
+    if (typeof profile.port !== 'string' || !/^\d+$/.test(profile.port)) return false;
+    const portNum = parseInt(profile.port, 10);
+    if (portNum < VALIDATION.PORT_MIN || portNum > VALIDATION.PORT_MAX) return false;
+
+    // lastUsed is optional but must be a string when present
+    if (profile.lastUsed !== undefined && typeof profile.lastUsed !== 'string') return false;
+
+    return true;
 }
 
 /**
