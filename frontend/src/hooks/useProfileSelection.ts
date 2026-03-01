@@ -94,12 +94,6 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
             }
 
             setProfiles(loadedProfiles);
-
-            // Clear active profile if it no longer exists
-            if (activeProfileId && !loadedProfiles.some(p => p.id === activeProfileId)) {
-                setActiveProfileId(null);
-                latestSelectionRef.current = null;
-            }
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to load profiles';
             setError(errorMessage);
@@ -107,7 +101,17 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
         } finally {
             setIsLoading(false);
         }
-    }, [adapter, activeProfileId]);
+        // Only depends on adapter — removing activeProfileId prevents reload loops (section 2.1)
+    }, [adapter]);
+
+    // Separately handle the case where the active profile is removed from the list.
+    // Keeping this in a dedicated effect avoids re-creating loadProfiles on every selection change.
+    useEffect(() => {
+        if (activeProfileId && !profiles.some(p => p.id === activeProfileId)) {
+            setActiveProfileId(null);
+            latestSelectionRef.current = null;
+        }
+    }, [activeProfileId, profiles]);
 
     // Load profiles on mount
     useEffect(() => {

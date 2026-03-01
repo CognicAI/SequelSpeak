@@ -1,14 +1,17 @@
-import { useState, useEffect, useRef, useCallback, type FormEvent } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, startTransition, type FormEvent } from 'react';
 import { Check, Database, AlertCircle, ArrowRight, Server, User, Key, Globe, Folder, Loader2 } from 'lucide-react';
 import { useAuth } from '@clerk/clerk-react';
 import { cn } from '../lib/utils';
-import type { TestConnectionSuccessResponse, TestConnectionErrorResponse } from '../types/api';
 import { getErrorMessage } from '../types/api';
 import { ProfileSelector } from './ProfileSelector';
 import { ConnectionStatusBanner, type ConnectionStatus } from './ConnectionStatusBanner';
+import { FormField } from './FormField';
 import { useProfileSelection } from '../hooks/useProfileSelection';
 import type { ConnectionProfile } from '../types/profile';
 import { saveProfile } from '../services/profileStorage';
+import { VALIDATION } from '../constants/validation';
+import { apiClient } from '../services/api/client';
+import { ApiError } from '../services/api/errors';
 
 type ConnectionMode = 'url' | 'fields';
 
@@ -29,18 +32,22 @@ export function ConnectionForm() {
      * Switches to 'fields' mode to show the filled values.
      */
     const fillFormFromProfile = useCallback((profile: ConnectionProfile) => {
-        setHost(profile.host);
-        setPort(profile.port);
-        setUser(profile.username);
-        // Password is never stored, so leave it empty for user to enter
-        setPassword('');
-        setDatabase(profile.database);
+        // Batch all 6 state updates in a low-priority transition so they
+        // render together as a single pass, avoiding 6 separate re-renders.
+        startTransition(() => {
+            setHost(profile.host);
+            setPort(profile.port);
+            setUser(profile.username);
+            // Password is never stored, so leave it empty for user to enter
+            setPassword('');
+            setDatabase(profile.database);
 
-        // Switch to fields mode to show the filled values
-        setMode('fields');
+            // Switch to fields mode to show the filled values
+            setMode('fields');
 
-        // Clear any previous status messages when switching profiles
-        setStatusMessage(null);
+            // Clear any previous status messages when switching profiles
+            setStatusMessage(null);
+        });
     }, []);
 
     /**
@@ -100,6 +107,16 @@ export function ConnectionForm() {
         validateUrl(value);
     };
 
+    // Debounced URL validation — avoids heavy regex on every keystroke (section 3.1)
+    const debouncedValidate = useMemo(() => {
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        return (url: string) => {
+            if (timeoutId !== null) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => validateUrl(url), 300);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // Auto-update URL when fields change
     useEffect(() => {
         if (mode === 'fields') {
@@ -111,13 +128,14 @@ export function ConnectionForm() {
 
             const generatedUrl = `postgres://${encodedUser}:${encodedPassword}@${encodedHost}:${encodedPort}/${encodedDb}`;
             if (user && database) {
-                validateUrl(generatedUrl);
+                debouncedValidate(generatedUrl);
             } else {
                 setIsValid(null);
                 setError('');
             }
         }
-    }, [host, port, user, password, database, mode]);
+    }, [host, port, user, password, database, mode, debouncedValidate]);
+
 
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
@@ -128,6 +146,16 @@ export function ConnectionForm() {
 
     // AbortController ref for cancelling in-flight requests
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    // Cleanup: abort any in-flight request when component unmounts (section 3.2)
+    useEffect(() => {
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+            }
+        };
+    }, []);
 
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
@@ -157,7 +185,7 @@ export function ConnectionForm() {
         try {
             // Get JWT token from Clerk
             const token = await getToken();
-            
+
             if (!token) {
                 // This shouldn't happen if user is signed in, but handle gracefully
                 setStatusMessage({
@@ -167,57 +195,49 @@ export function ConnectionForm() {
                 return;
             }
 
-            const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-            const response = await fetch(`${API_BASE_URL}/api/v1/utils/test-connection`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,  // Add JWT token
-                },
-                body: JSON.stringify({ connection_url: connectionUrl }),
-                signal: abortControllerRef.current.signal,
-            });
+            const data = await apiClient.testConnection(
+                connectionUrl,
+                token,
+                abortControllerRef.current.signal,
+            );
 
-            const data = await response.json();
+            // Check if recovering from a disconnected state
+            if (wasDisconnectedRef.current) {
+                setConnectionStatus('connected');
+                wasDisconnectedRef.current = false;
+            }
 
-            if (response.ok) {
-                const successData = data as TestConnectionSuccessResponse;
+            // Save profile to LocalStorage after successful connection
+            const result = saveProfile(connectionUrl);
 
-                // Check if recovering from a disconnected state
-                if (wasDisconnectedRef.current) {
-                    setConnectionStatus('connected');
-                    wasDisconnectedRef.current = false;
-                }
+            if (result) {
+                // Use the isNew flag to determine if this was a new profile or an update
+                const action = result.isNew ? 'saved' : 'updated';
 
-                // Save profile to LocalStorage after successful connection
-                const result = saveProfile(connectionUrl);
-
-                if (result) {
-                    // Use the isNew flag to determine if this was a new profile or an update
-                    const action = result.isNew ? 'saved' : 'updated';
-
-                    setStatusMessage({
-                        type: 'success',
-                        text: `${successData.message} Profile "${result.profile.name}" ${action} successfully.`
-                    });
-                } else {
-                    // Connection succeeded but profile save failed (e.g., quota exceeded)
-                    setStatusMessage({
-                        type: 'success',
-                        text: `${successData.message} (Note: Profile could not be saved to browser storage)`
-                    });
-                }
+                setStatusMessage({
+                    type: 'success',
+                    text: `${data.message} Profile "${result.profile.name}" ${action} successfully.`
+                });
             } else {
-                const errorData = data as TestConnectionErrorResponse;
-
+                // Connection succeeded but profile save failed (e.g., quota exceeded)
+                setStatusMessage({
+                    type: 'success',
+                    text: `${data.message} (Note: Profile could not be saved to browser storage)`
+                });
+            }
+        } catch (err) {
+            // Don't show error if request was aborted (user cancelled)
+            if (err instanceof ApiError && err.code === 'REQUEST_CANCELLED') {
+                return;
+            }
+            if (err instanceof ApiError) {
                 // Check for CONNECTION_LOST error code
-                if (errorData.error_code === 'CONNECTION_LOST') {
+                if (err.code === 'CONNECTION_LOST') {
                     setConnectionStatus('disconnected');
                     wasDisconnectedRef.current = true;
                 }
-
-                // Handle 401 authentication errors specifically
-                if (response.status === 401) {
+                // 401 = session expired
+                if (err.status === 401) {
                     setStatusMessage({
                         type: 'error',
                         text: 'Your session has expired. Please sign in again.'
@@ -225,16 +245,12 @@ export function ConnectionForm() {
                 } else {
                     setStatusMessage({
                         type: 'error',
-                        text: getErrorMessage(errorData.detail)
+                        text: getErrorMessage(err.message)
                     });
                 }
+            } else {
+                setStatusMessage({ type: 'error', text: 'Failed to connect to backend server. Please check your network connection.' });
             }
-        } catch (err) {
-            // Don't show error if request was aborted (user cancelled)
-            if (err instanceof Error && err.name === 'AbortError') {
-                return;
-            }
-            setStatusMessage({ type: 'error', text: 'Failed to connect to backend server. Please check your network connection.' });
         } finally {
             setIsLoading(false);
             abortControllerRef.current = null;
@@ -398,130 +414,71 @@ export function ConnectionForm() {
                         ) : (
                             <div className="space-y-3 animate-in slide-in-from-right-4 fade-in duration-300">
                                 <div className="grid grid-cols-2 gap-3">
-                                    <div className="space-y-1">
-                                        <label className="text-xs text-gray-400 ml-1">Host</label>
-                                        <div className="relative">
-                                            <Server className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
-                                            <input
-                                                value={host}
-                                                onChange={(e) => setHost(e.target.value)}
-                                                disabled={isLoading}
-                                                className={cn(
-                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
-                                                    isLoading && "opacity-50 cursor-not-allowed"
-                                                )}
-                                                placeholder="localhost"
-                                            />
-                                            {host && /^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])(\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]))*$|^localhost$/.test(host) && (
-                                                <div className="absolute right-2.5 top-2.5 animate-in fade-in zoom-in">
-                                                    <Check className="w-4 h-4 text-green-500" />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs text-gray-400 ml-1">Port</label>
-                                        <div className="relative">
-                                            <Globe className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
-                                            <input
-                                                value={port}
-                                                maxLength={5}
-                                                onChange={(e) => {
-                                                    const val = e.target.value;
-                                                    if (/^\d*$/.test(val)) setPort(val);
-                                                }}
-                                                disabled={isLoading}
-                                                className={cn(
-                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
-                                                    isLoading && "opacity-50 cursor-not-allowed"
-                                                )}
-                                                placeholder="5432"
-                                            />
-                                            {port.length === 6 && (
-                                                <div className="absolute right-2.5 top-2.5 animate-in fade-in zoom-in">
-                                                    <Check className="w-4 h-4 text-green-500" />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
+                                    <FormField
+                                        label="Host"
+                                        value={host}
+                                        onChange={setHost}
+                                        icon={Server}
+                                        placeholder="localhost"
+                                        validate={(v) => /^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])(\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]))*$|^localhost$/.test(v)}
+                                        disabled={isLoading}
+                                    />
+                                    <FormField
+                                        label="Port"
+                                        value={port}
+                                        onChange={(v) => { if (/^\d*$/.test(v) && v.length <= VALIDATION.PORT_MAX_LENGTH) setPort(v); }}
+                                        icon={Globe}
+                                        placeholder="5432"
+                                        validate={(v) => {
+                                            if (!/^\d+$/.test(v)) return false;
+                                            const n = parseInt(v, 10);
+                                            return n >= VALIDATION.PORT_MIN && n <= VALIDATION.PORT_MAX;
+                                        }}
+                                        disabled={isLoading}
+                                    />
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3">
-                                    <div className="space-y-1">
-                                        <label className="text-xs text-gray-400 ml-1">User</label>
-                                        <div className="relative">
-                                            <User className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
-                                            <input
-                                                value={user}
-                                                onChange={(e) => setUser(e.target.value)}
-                                                disabled={isLoading}
-                                                className={cn(
-                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
-                                                    isLoading && "opacity-50 cursor-not-allowed"
-                                                )}
-                                                placeholder="postgres"
-                                            />
-                                            {user && (
-                                                <div className="absolute right-2.5 top-2.5 animate-in fade-in zoom-in">
-                                                    <Check className="w-4 h-4 text-green-500" />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs text-gray-400 ml-1">Password</label>
-                                        <div className="relative">
-                                            <Key className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
-                                            <input
-                                                type="password"
-                                                value={password}
-                                                onChange={(e) => setPassword(e.target.value)}
-                                                disabled={isLoading}
-                                                className={cn(
-                                                    "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
-                                                    isLoading && "opacity-50 cursor-not-allowed"
-                                                )}
-                                                placeholder="••••••"
-                                            />
-                                            {password && (
-                                                <div className="absolute right-2.5 top-2.5 animate-in fade-in zoom-in">
-                                                    <Check className="w-4 h-4 text-green-500" />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
+                                    <FormField
+                                        label="User"
+                                        value={user}
+                                        onChange={setUser}
+                                        icon={User}
+                                        placeholder="postgres"
+                                        disabled={isLoading}
+                                    />
+                                    <FormField
+                                        label="Password"
+                                        value={password}
+                                        onChange={setPassword}
+                                        icon={Key}
+                                        type="password"
+                                        placeholder="••••••"
+                                        disabled={isLoading}
+                                    />
                                 </div>
 
-                                <div className="space-y-1">
-                                    <label className="text-xs text-gray-400 ml-1">Database Name</label>
-                                    <div className="relative">
-                                        <Folder className="absolute left-3 top-2.5 w-4 h-4 text-gray-500" />
-                                        <input
-                                            value={database}
-                                            onChange={(e) => setDatabase(e.target.value)}
-                                            disabled={isLoading}
-                                            className={cn(
-                                                "w-full bg-background/50 border border-white/10 rounded-lg py-2 pl-9 pr-8 text-sm focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/50",
-                                                isLoading && "opacity-50 cursor-not-allowed"
-                                            )}
-                                            placeholder="my_database"
-                                        />
-                                        {database && (
-                                            <div className="absolute right-2.5 top-2.5 animate-in fade-in zoom-in">
-                                                <Check className="w-4 h-4 text-green-500" />
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                <FormField
+                                    label="Database Name"
+                                    value={database}
+                                    onChange={setDatabase}
+                                    icon={Folder}
+                                    placeholder="my_database"
+                                    disabled={isLoading}
+                                />
                             </div>
                         )}
 
                         <div className="space-y-2">
-                            {/* Validation Error */}
-                            <div className={cn(
-                                "flex items-center gap-2 text-xs transition-all duration-300 overflow-hidden",
-                                ((mode === 'url' && isValid === false) && !statusMessage) ? "h-6 opacity-100 text-red-400" : "h-0 opacity-0"
-                            )}>
+                            {/* Validation Error — announced immediately to screen readers */}
+                            <div
+                                role="alert"
+                                aria-live="assertive"
+                                className={cn(
+                                    "flex items-center gap-2 text-xs transition-all duration-300 overflow-hidden",
+                                    ((mode === 'url' && isValid === false) && !statusMessage) ? "h-6 opacity-100 text-red-400" : "h-0 opacity-0"
+                                )}
+                            >
                                 <AlertCircle className="w-3 h-3" />
                                 <span>{error}</span>
                             </div>

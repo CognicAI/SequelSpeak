@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Wifi, WifiOff, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { CONNECTION_STATUS_MESSAGES } from '../types/api';
+import { UI } from '../constants/ui';
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 
@@ -22,7 +23,7 @@ interface ConnectionStatusBannerProps {
 export function ConnectionStatusBanner({
     status,
     onDismiss,
-    autoDismissDelay = 3000,
+    autoDismissDelay = UI.AUTO_DISMISS_DELAY,
 }: ConnectionStatusBannerProps) {
     const [isVisible, setIsVisible] = useState(false);
     const [displayStatus, setDisplayStatus] = useState<ConnectionStatus>(status);
@@ -50,6 +51,7 @@ export function ConnectionStatusBanner({
             // 'unknown' - hide the banner
             setIsVisible(false);
         }
+        return undefined;
     }, [status, autoDismissDelay]);
 
     if (!isVisible) {
