@@ -23,9 +23,11 @@
     /* Path Aliases */
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./src/*"
-      ]
+      "@/*": ["./src/*"],
+      "@components/*": ["./src/components/*"],
+      "@hooks/*": ["./src/hooks/*"],
+      "@services/*": ["./src/services/*"],
+      "@app-types/*": ["./src/types/*"]
     },
     /* Linting */
     "strict": true,

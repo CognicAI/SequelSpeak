@@ -40,19 +40,32 @@ class ApiClient {
 
         try {
             const response = await fetch(url, config);
-            const data: unknown = await response.json();
 
             if (!response.ok) {
-                // Server returned an error payload
-                const errorData = data as { detail?: string; error_code?: string };
+                // Attempt to parse a structured error body; fall back gracefully
+                // if the body is non-JSON (e.g. HTML from a proxy, empty 5xx).
+                let detail: string | undefined;
+                let errorCode: string | undefined;
+                try {
+                    const errorData = await response.json() as { detail?: string; error_code?: string };
+                    detail = errorData.detail;
+                    errorCode = errorData.error_code;
+                } catch {
+                    // Non-JSON body — use the HTTP status text as the message
+                }
                 throw new ApiError(
-                    errorData.detail ?? 'Request failed',
-                    errorData.error_code,
+                    detail ?? response.statusText ?? 'Request failed',
+                    errorCode,
                     response.status,
                 );
             }
 
-            return data as T;
+            // 204 No Content (and similar) have no body to parse
+            const data: T = response.status === 204
+                ? (undefined as T)
+                : (await response.json() as T);
+
+            return data;
         } catch (error) {
             if (error instanceof ApiError) throw error;
             if (error instanceof DOMException && error.name === 'AbortError') {
