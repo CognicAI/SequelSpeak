@@ -162,9 +162,9 @@ export function ProfileSelector({
             setIsOpen(false);
         }
         setProfileToDelete(null);
-        // Restore focus to the element that triggered the modal (section 5.3)
-        setTimeout(() => { deleteTriggerRef.current?.focus(); }, 0);
-    }, [profileToDelete, onDeleteProfile]);
+        // After confirming delete and closing the dropdown, restore focus to the main trigger button
+        setTimeout(() => { buttonRef.current?.focus(); }, 0);
+    }, [profileToDelete, onDeleteProfile, buttonRef]);
 
     // Handle delete cancellation
     const handleCancelDelete = useCallback(() => {
