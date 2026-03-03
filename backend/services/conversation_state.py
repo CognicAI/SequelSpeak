@@ -270,8 +270,12 @@ class ConversationStateManager:
         self._initialized = False
     
     def _generate_conversation_id(self) -> str:
-        """Generate a new UUID v4 conversation ID."""
+        """Generate a new UUID v4 conversation ID (internal)."""
         return str(uuid.uuid4())
+
+    def generate_conversation_id(self) -> str:
+        """Generate a new UUID v4 conversation ID (public API for testing and downstream use)."""
+        return self._generate_conversation_id()
     
     def _get_redis_key(self, conversation_id: str) -> str:
         """Get Redis key for conversation ID."""
