@@ -17,8 +17,7 @@ import pytest
 # Add backend to path to import modules - MUST be before any project imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from httpx import ASGITransport, AsyncClient
-from main import app
+from httpx import AsyncClient
 from config import settings
 
 
@@ -33,13 +32,13 @@ class TestHealthEndpointStructure:
     """Tests for health endpoint response structure."""
 
     @pytest.mark.asyncio
-    async def test_health_endpoint_exists(self, client):
+    async def test_health_endpoint_exists(self, client: AsyncClient) -> None:
         """Test that /api/v1/health endpoint exists and responds."""
         response = await client.get("/api/v1/health")
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_health_response_has_required_fields(self, client):
+    async def test_health_response_has_required_fields(self, client: AsyncClient) -> None:
         """Test that response contains all required fields."""
         response = await client.get("/api/v1/health")
         data = response.json()
@@ -50,7 +49,7 @@ class TestHealthEndpointStructure:
         assert "status" in data["database"]
 
     @pytest.mark.asyncio
-    async def test_health_status_is_always_ok(self, client):
+    async def test_health_status_is_always_ok(self, client: AsyncClient) -> None:
         """Test that API status is always 'ok' when endpoint responds."""
         response = await client.get("/api/v1/health")
         data = response.json()
@@ -58,7 +57,7 @@ class TestHealthEndpointStructure:
         assert data["status"] == "ok"
 
     @pytest.mark.asyncio
-    async def test_health_timestamp_is_iso_format(self, client):
+    async def test_health_timestamp_is_iso_format(self, client: AsyncClient) -> None:
         """Test that timestamp is in ISO 8601 format."""
         response = await client.get("/api/v1/health")
         data = response.json()
@@ -75,7 +74,7 @@ class TestDatabaseHealthStatus:
     """Tests for database health reporting."""
 
     @pytest.mark.asyncio
-    async def test_database_status_reporting(self, client):
+    async def test_database_status_reporting(self, client: AsyncClient) -> None:
         """Test health check reports database status (healthy/unhealthy/not_configured)."""
         response = await client.get("/api/v1/health")
         data = response.json()
@@ -85,7 +84,7 @@ class TestDatabaseHealthStatus:
         assert "configured" in data["database"]
 
     @pytest.mark.asyncio
-    async def test_database_status_with_configured_url(self, client):
+    async def test_database_status_with_configured_url(self, client: AsyncClient) -> None:
         """Test health check when database URL is configured."""
         if not settings.health_check_db_url:
             # If no URL configured, status should be not_configured
@@ -110,7 +109,7 @@ class TestHealthLatency:
     """Tests for response latency measurement."""
 
     @pytest.mark.asyncio
-    async def test_latency_is_measured_when_db_configured(self, client):
+    async def test_latency_is_measured_when_db_configured(self, client: AsyncClient) -> None:
         """Test that latency_ms is populated when database URL is configured."""
         if not settings.health_check_db_url:
             # Skip if no URL configured
@@ -129,7 +128,7 @@ class TestHealthLatency:
                     assert data["database"]["latency_ms"] >= 0
 
     @pytest.mark.asyncio
-    async def test_endpoint_response_time(self, client):
+    async def test_endpoint_response_time(self, client: AsyncClient) -> None:
         """Test that health endpoint responds quickly."""
         start = time.perf_counter()
         response = await client.get("/api/v1/health")
@@ -148,13 +147,13 @@ class TestGracefulFailure:
     """Tests for graceful failure handling."""
 
     @pytest.mark.asyncio
-    async def test_always_returns_200(self, client):
+    async def test_always_returns_200(self, client: AsyncClient) -> None:
         """Test that endpoint always returns 200 regardless of database state."""
         response = await client.get("/api/v1/health")
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_response_structure_on_any_state(self, client):
+    async def test_response_structure_on_any_state(self, client: AsyncClient) -> None:
         """Test that response always has proper structure."""
         response = await client.get("/api/v1/health")
         data = response.json()
@@ -174,7 +173,7 @@ class TestNoCredentialExposure:
     """Tests to ensure credentials are never exposed in health response."""
 
     @pytest.mark.asyncio
-    async def test_no_credentials_in_response(self, client):
+    async def test_no_credentials_in_response(self, client: AsyncClient) -> None:
         """Test that database credentials are not exposed in response."""
         response = await client.get("/api/v1/health")
         response_text = response.text.lower()
@@ -186,7 +185,7 @@ class TestNoCredentialExposure:
             assert "postgres://" not in response_text
             
     @pytest.mark.asyncio
-    async def test_response_only_has_safe_fields(self, client):
+    async def test_response_only_has_safe_fields(self, client: AsyncClient) -> None:
         """Test that response only contains expected safe fields."""
         response = await client.get("/api/v1/health")
         data = response.json()
@@ -196,7 +195,7 @@ class TestNoCredentialExposure:
         assert set(data["database"].keys()) == {"configured", "status", "latency_ms"}
 
     @pytest.mark.asyncio
-    async def test_no_sensitive_data_in_headers(self, client):
+    async def test_no_sensitive_data_in_headers(self, client: AsyncClient) -> None:
         """Test that response headers don't leak sensitive information."""
         response = await client.get("/api/v1/health")
         
@@ -214,7 +213,7 @@ class TestHealthEndpointIntegration:
     """Comprehensive integration tests for all system states."""
 
     @pytest.mark.asyncio
-    async def test_health_endpoint_complete_flow(self, client):
+    async def test_health_endpoint_complete_flow(self, client: AsyncClient) -> None:
         """
         INTEGRATION TEST: Complete health check flow
         - Endpoint is accessible
@@ -248,7 +247,7 @@ class TestHealthEndpointIntegration:
         assert "password" not in response.text.lower() or "null" in response.text.lower()
 
     @pytest.mark.asyncio
-    async def test_health_check_idempotency(self, client):
+    async def test_health_check_idempotency(self, client: AsyncClient) -> None:
         """
         Test that multiple calls return consistent structure.
         """

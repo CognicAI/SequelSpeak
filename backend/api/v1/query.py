@@ -6,6 +6,7 @@ the Router request schema. This is the entry point for all query requests.
 """
 
 import logging
+from typing import Any
 from fastapi import APIRouter, status, Request
 from pydantic import ValidationError
 from schemas.router import (
@@ -13,8 +14,10 @@ from schemas.router import (
     RouterInitResponse,
     RouterErrorResponse,
     RouterErrorCode,
+    UserContext,
 )
 from services.conversation_state import conversation_state_manager
+from utils.security import sanitize_user_context_for_log
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -132,16 +135,53 @@ async def initialize_query(request: Request, payload: RouterRequest) -> RouterIn
         f"conversation_id={'provided' if payload.conversation_id else 'not_provided'}",
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
-    
+
     # Get or create conversation using state manager
     conversation_id = await conversation_state_manager.get_or_create(payload.conversation_id)
-    
-    # Update conversation state with any provided metadata
-    if payload.user_context:
-        await conversation_state_manager.upsert_state(
-            conversation_id,
-            metadata={'user_context': payload.user_context.model_dump()}
-        )
+
+    # Attach conversation_id to request.state for downstream propagation
+    # (accessible by personas, middleware, and future pipeline stages)
+    request.state.conversation_id = conversation_id
+
+    # Build enriched user/session metadata:
+    # - Start from the payload's user_context (default to empty UserContext if omitted).
+    # - Auto-populate ip_address from the real client IP if the caller did not supply it.
+    user_context: UserContext = payload.user_context if payload.user_context is not None else UserContext()
+    if user_context.ip_address is None and request.client is not None:
+        user_context = user_context.model_copy(update={"ip_address": request.client.host})
+
+    # Merge with any already-stored user_context so that follow-up requests
+    # without explicit user_context do not overwrite previously persisted fields.
+    # Strategy: existing values are the base; new non-None values override them.
+    existing_state = await conversation_state_manager.get_state(conversation_id)
+    existing_ctx: dict[str, Any] = (
+        existing_state.metadata.get("user_context", {})
+        if existing_state is not None
+        else {}
+    )
+    new_ctx = user_context.model_dump()
+    merged_ctx: dict[str, Any] = {
+        **existing_ctx,
+        **{k: v for k, v in new_ctx.items() if v is not None},
+    }
+
+    # Persist full merged metadata (including ip_address) to ConversationState.
+    # ip_address is stored for security/audit purposes but is NEVER logged.
+    await conversation_state_manager.upsert_state(
+        conversation_id,
+        metadata={'user_context': merged_ctx}
+    )
+
+    # Attach merged user_context to request.state for downstream personas.
+    # Downstream components read request.state.user_context for routing decisions.
+    request.state.user_context = merged_ctx
+
+    # Log safe (non-sensitive) metadata only — ip_address is intentionally excluded.
+    safe_ctx = sanitize_user_context_for_log(merged_ctx)
+    logger.info(
+        f"Metadata attached: conversation_id={conversation_id}, user_context={safe_ctx}",
+        extra={'extra_fields': {'correlation_id': correlation_id}}
+    )
     
     from datetime import datetime, timezone
     

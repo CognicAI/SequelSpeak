@@ -50,7 +50,7 @@ class TestRouterRequestSchema:
         
         assert request.query == "How many active users do we have?"
         assert request.conversation_id is None
-        assert request.user_context is not None  # Default factory creates instance
+        assert request.user_context is None  # defaults to None; endpoint normalises to UserContext()
     
     def test_valid_request_minimal(self):
         """Test valid request with only required fields."""

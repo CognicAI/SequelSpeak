@@ -5,10 +5,11 @@ Defines the strict contract for Router entry point inputs/outputs.
 Aligned with SRS v2 Router specifications.
 """
 
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from enum import Enum
 import re
+from utils.security import SENSITIVE_USER_CONTEXT_FIELDS
 
 
 class RouterErrorCode(str, Enum):
@@ -52,9 +53,20 @@ class UserContext(BaseModel):
     
     ip_address: Optional[str] = Field(
         default=None,
-        description="Client IP address for security logging"
+        description="Client IP address for security/audit purposes (never logged)"
     )
-    
+
+    def safe_dict(self) -> dict[str, Any]:
+        """
+        Return model data with sensitive fields excluded, safe for logging.
+
+        Always use this method when building log messages that include
+        user/session metadata. Use model_dump() only for persistence.
+
+        Excluded fields: ip_address
+        """
+        return {k: v for k, v in self.model_dump().items() if k not in SENSITIVE_USER_CONTEXT_FIELDS}
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -99,14 +111,14 @@ class RouterRequest(BaseModel):
         }
     )
     
-    user_context: UserContext = Field(
-        default_factory=UserContext,
+    user_context: UserContext | None = Field(
+        default=None,
         description="Optional user and session metadata for tracking"
     )
     
     @field_validator('query', mode='before')
     @classmethod
-    def validate_query(cls, v: str) -> str:
+    def validate_query(cls, v: object) -> str:
         """
         Validate query string content and format.
         
