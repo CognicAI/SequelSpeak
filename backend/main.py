@@ -18,6 +18,7 @@ import asyncio
 from typing import Callable, Awaitable, Any
 from services.connection_pool import pool_manager
 from services.conversation_state import conversation_state_manager
+from services.router_service import initialize_router_service
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -80,6 +81,10 @@ async def lifespan(app: FastAPI):
     # Initialize conversation state manager
     await conversation_state_manager.initialize()
     logger.info(f"✓ Conversation state manager initialized (mode: {conversation_state_manager.storage_mode})")
+    
+    # Initialize router service
+    initialize_router_service(conversation_state_manager)
+    logger.info("✓ Router service initialized")
     
     logger.info("=" * 60)
     logger.info("✓ Configuration validated successfully")

@@ -99,3 +99,4 @@ temp/
 .github/copilot-instructions.md
 pdf_generator/
 .github/agents/
+jira_automation/
