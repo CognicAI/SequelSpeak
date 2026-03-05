@@ -2,6 +2,7 @@
 Shared pytest configuration and fixtures for all tests.
 """
 import pytest
+from typing import AsyncGenerator
 from httpx import ASGITransport, AsyncClient
 from main import app, prom_metrics
 from config import settings
@@ -18,7 +19,7 @@ def initialize_test_metrics():
 
 
 @pytest.fixture(autouse=True)
-async def reset_conversation_state():
+async def reset_conversation_state() -> AsyncGenerator[None, None]:
     """
     Reset conversation state manager before and after each test.
     
@@ -37,7 +38,7 @@ async def reset_conversation_state():
 
 
 @pytest.fixture
-async def client(reset_conversation_state):
+async def client(reset_conversation_state: None) -> AsyncGenerator[AsyncClient, None]:
     """
     Provide an async test client for each test.
     
@@ -47,7 +48,9 @@ async def client(reset_conversation_state):
     Note: ASGITransport with app triggers lifespan events by default.
     Depends on reset_conversation_state to ensure proper initialization order.
     """
-    # Create transport with raise_app_exceptions=False to match test expectations
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+    # Manually trigger lifespan to initialize router service and other components
+    async with app.router.lifespan_context(app):
+        # Create transport with raise_app_exceptions=False to match test expectations
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac
