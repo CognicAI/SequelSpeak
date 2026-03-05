@@ -307,6 +307,9 @@ class ConnectionPoolManager:
                     # Add timeout to prevent hanging during shutdown
                     await asyncio.wait_for(pool.close(), timeout=5.0)
                     logger.info(f"Connection pool closed (pool_key={pool_key[:8]}...)")
+                except asyncio.CancelledError:
+                    # Handle cancellation gracefully during shutdown
+                    logger.debug(f"Pool {pool_key[:8]}... close cancelled, marking as closed")
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout closing pool {pool_key[:8]}..., forcing close")
                 except Exception as e:
