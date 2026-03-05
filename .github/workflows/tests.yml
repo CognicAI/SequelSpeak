@@ -8,9 +8,8 @@ on:
       - "backend/**"
       - ".github/workflows/tests.yml"
   pull_request:
-    paths:
-      - "backend/**"
-      - ".github/workflows/tests.yml"
+    # Run on all PRs - no path restrictions
+    # This ensures checks always run for branch protection rules
 
 jobs:
   test:
