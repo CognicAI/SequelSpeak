@@ -30,7 +30,7 @@ def mock_state_manager() -> Any:
     """Provide a mocked ConversationStateManager."""
     manager = AsyncMock(spec=ConversationStateManager)
     manager.generate_conversation_id.return_value = "test-conv-id-123"
-    manager._store_state = AsyncMock()
+    manager.save_state = AsyncMock()
     manager.get_state = AsyncMock(return_value=None)
     return manager
 
@@ -71,8 +71,8 @@ class TestRouterServiceInitialization:
         assert state.metadata['correlation_id'] == correlation_id
         
         # Verify persistence was called
-        mock_state_manager._store_state.assert_called_once()
-        stored_state = mock_state_manager._store_state.call_args[0][0]
+        mock_state_manager.save_state.assert_called_once()
+        stored_state = mock_state_manager.save_state.call_args[0][0]
         assert stored_state.conversation_id == "test-conv-id-123"
     
     @pytest.mark.asyncio
@@ -139,8 +139,8 @@ class TestRouterServiceErrorHandling:
         
         await router_service._persist_state_with_retry(state)  # type: ignore[reportPrivateUsage]
         
-        # Verify _store_state was called once
-        assert mock_state_manager._store_state.call_count == 1
+        # Verify save_state was called once
+        assert mock_state_manager.save_state.call_count == 1
     
     @pytest.mark.asyncio
     async def test_persist_with_retry_success_on_second_attempt(self, router_service: RouterService, mock_state_manager: Any) -> None:
@@ -151,15 +151,15 @@ class TestRouterServiceErrorHandling:
         )
         
         # First call fails, second succeeds
-        mock_state_manager._store_state.side_effect = [
+        mock_state_manager.save_state.side_effect = [
             Exception("Connection failed"),
             None  # Success on second attempt
         ]
         
         await router_service._persist_state_with_retry(state, max_retries=2)  # type: ignore[reportPrivateUsage]
         
-        # Verify _store_state was called twice
-        assert mock_state_manager._store_state.call_count == 2
+        # Verify save_state was called twice
+        assert mock_state_manager.save_state.call_count == 2
     
     @pytest.mark.asyncio
     async def test_persist_with_retry_all_attempts_fail(self, router_service: RouterService, mock_state_manager: Any) -> None:
@@ -170,13 +170,13 @@ class TestRouterServiceErrorHandling:
         )
         
         # All attempts fail
-        mock_state_manager._store_state.side_effect = Exception("Persistent failure")
+        mock_state_manager.save_state.side_effect = Exception("Persistent failure")
         
         with pytest.raises(Exception, match="Failed to persist conversation state after"):
             await router_service._persist_state_with_retry(state, max_retries=2)  # type: ignore[reportPrivateUsage]
         
-        # Verify _store_state was called 3 times (initial + 2 retries)
-        assert mock_state_manager._store_state.call_count == 3
+        # Verify save_state was called 3 times (initial + 2 retries)
+        assert mock_state_manager.save_state.call_count == 3
     
     @pytest.mark.asyncio
     async def test_initialize_conversation_propagates_persistence_error(self, router_service: RouterService, mock_state_manager: Any) -> None:
@@ -184,7 +184,7 @@ class TestRouterServiceErrorHandling:
         query = "Test query"
         
         # Make persistence fail
-        mock_state_manager._store_state.side_effect = Exception("Redis connection lost")
+        mock_state_manager.save_state.side_effect = Exception("Redis connection lost")
         
         with pytest.raises(Exception, match="Failed to persist conversation state"):
             await router_service.initialize_conversation(query=query)
@@ -221,7 +221,7 @@ class TestRouterServiceStageUpdate:
         assert existing_state.status == ConversationStatus.PROCESSING
         
         # Verify persistence was called
-        mock_state_manager._store_state.assert_called_once()
+        mock_state_manager.save_state.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_update_stage_with_additional_fields(self, router_service: RouterService, mock_state_manager: Any) -> None:
@@ -254,7 +254,7 @@ class TestRouterServiceStageUpdate:
         )
         
         # Verify persistence was not called
-        mock_state_manager._store_state.assert_not_called()
+        mock_state_manager.save_state.assert_not_called()
 
 
 # ============================================================================
