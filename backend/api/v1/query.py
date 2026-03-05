@@ -17,6 +17,7 @@ from schemas.router import (
     UserContext,
 )
 from services.conversation_state import conversation_state_manager
+from services.router_service import get_router_service
 from utils.security import sanitize_user_context_for_log
 
 router = APIRouter()
@@ -136,50 +137,58 @@ async def initialize_query(request: Request, payload: RouterRequest) -> RouterIn
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
 
-    # Get or create conversation using state manager
-    conversation_id = await conversation_state_manager.get_or_create(payload.conversation_id)
-
-    # Attach conversation_id to request.state for downstream propagation
-    # (accessible by personas, middleware, and future pipeline stages)
-    request.state.conversation_id = conversation_id
-
     # Build enriched user/session metadata:
     # - Start from the payload's user_context (default to empty UserContext if omitted).
     # - Auto-populate ip_address from the real client IP if the caller did not supply it.
     user_context: UserContext = payload.user_context if payload.user_context is not None else UserContext()
     if user_context.ip_address is None and request.client is not None:
         user_context = user_context.model_copy(update={"ip_address": request.client.host})
+    
+    # Convert user_context to dict for persistence
+    user_context_dict = user_context.model_dump()
 
-    # Merge with any already-stored user_context so that follow-up requests
-    # without explicit user_context do not overwrite previously persisted fields.
-    # Strategy: existing values are the base; new non-None values override them.
-    existing_state = await conversation_state_manager.get_state(conversation_id)
-    existing_ctx: dict[str, Any] = (
-        existing_state.metadata.get("user_context", {})
-        if existing_state is not None
-        else {}
-    )
-    new_ctx = user_context.model_dump()
-    merged_ctx: dict[str, Any] = {
-        **existing_ctx,
-        **{k: v for k, v in new_ctx.items() if v is not None},
-    }
+    # Initialize conversation state using RouterService
+    # This creates the initial state with proper stage, status, and query
+    router_service = get_router_service()
+    
+    # Check if this is a new conversation or existing one
+    existing_state = None
+    if payload.conversation_id:
+        existing_state = await conversation_state_manager.get_state(payload.conversation_id)
+    
+    if existing_state:
+        # Existing conversation - merge user context
+        conversation_id = existing_state.conversation_id
+        existing_ctx = existing_state.metadata.get("user_context", {})
+        merged_ctx: dict[str, Any] = {
+            **existing_ctx,
+            **{k: v for k, v in user_context_dict.items() if v is not None},
+        }
+        
+        # Update metadata only (preserve existing state fields)
+        await conversation_state_manager.upsert_state(
+            conversation_id,
+            metadata={'user_context': merged_ctx, 'correlation_id': correlation_id}
+        )
+    else:
+        # New conversation - initialize with RouterService
+        state = await router_service.initialize_conversation(
+            query=payload.query,
+            conversation_id=payload.conversation_id,
+            user_context=user_context_dict,
+            correlation_id=correlation_id,
+        )
+        conversation_id = state.conversation_id
+        merged_ctx = user_context_dict
 
-    # Persist full merged metadata (including ip_address) to ConversationState.
-    # ip_address is stored for security/audit purposes but is NEVER logged.
-    await conversation_state_manager.upsert_state(
-        conversation_id,
-        metadata={'user_context': merged_ctx}
-    )
-
-    # Attach merged user_context to request.state for downstream personas.
-    # Downstream components read request.state.user_context for routing decisions.
+    # Attach conversation_id and user_context to request.state for downstream propagation
+    request.state.conversation_id = conversation_id
     request.state.user_context = merged_ctx
 
     # Log safe (non-sensitive) metadata only — ip_address is intentionally excluded.
     safe_ctx = sanitize_user_context_for_log(merged_ctx)
     logger.info(
-        f"Metadata attached: conversation_id={conversation_id}, user_context={safe_ctx}",
+        f"Conversation initialized: conversation_id={conversation_id}, user_context={safe_ctx}",
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
     
