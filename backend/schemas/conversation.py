@@ -146,9 +146,7 @@ class ConversationStateSchema(BaseModel):
     
     This schema defines all 18 fields required by SRS v2 Section 6.1.
     Used for serialization/deserialization with Redis/database.
-    
-    Design Note: This is the TARGET schema. Current implementation has only 4/18 fields.
-    This schema guides the incremental enhancement of ConversationState class.
+    Acts as the authoritative schema for the persisted ConversationState.
     """
     
     # ===== Core Identity Fields =====
