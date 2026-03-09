@@ -13,7 +13,7 @@ Test Coverage:
 """
 
 import pytest
-from datetime import datetime, timezone
+from httpx import AsyncClient
 
 from services.conversation_state import conversation_state_manager
 from services.router_service import initialize_router_service, get_router_service
@@ -30,7 +30,7 @@ from schemas.conversation import ExecutionStage, ConversationStatus
 async def clean_state():
     """Clean conversation state before and after each test."""
     # Initialize if needed
-    if not conversation_state_manager._initialized:
+    if not conversation_state_manager.is_initialized:
         await conversation_state_manager.initialize()
     
     # Initialize router service if needed
@@ -56,7 +56,7 @@ class TestRouterStatePersistenceIntegration:
     """Integration tests for Router entry point state persistence."""
     
     @pytest.mark.asyncio
-    async def test_new_conversation_creates_initial_state(self, client):
+    async def test_new_conversation_creates_initial_state(self, client: AsyncClient):
         """Test that a new query creates initial conversation state."""
         # Send query request
         response = await client.post(
@@ -78,9 +78,9 @@ class TestRouterStatePersistenceIntegration:
         
         # Retrieve state from persistence
         state = await conversation_state_manager.get_state(conversation_id)
+        assert state is not None
         
         # Verify state was persisted correctly
-        assert state is not None
         assert state.conversation_id == conversation_id
         assert state.original_nl_query == "Show me sales from last month"
         assert state.current_stage == ExecutionStage.PLANNING
@@ -90,7 +90,7 @@ class TestRouterStatePersistenceIntegration:
         assert state.updated_at is not None
     
     @pytest.mark.asyncio
-    async def test_conversation_with_user_context_persists_metadata(self, client):
+    async def test_conversation_with_user_context_persists_metadata(self, client: AsyncClient):
         """Test that user context is persisted in metadata."""
         response = await client.post(
             "/api/v1/query",
@@ -109,13 +109,14 @@ class TestRouterStatePersistenceIntegration:
         
         # Retrieve state
         state = await conversation_state_manager.get_state(conversation_id)
+        assert state is not None
         
         # Verify user context in metadata
         assert state.metadata["user_context"]["user_id"] == "user-123"
         assert state.metadata["user_context"]["session_id"] == "session-abc"
     
     @pytest.mark.asyncio
-    async def test_existing_conversation_preserves_state(self, client):
+    async def test_existing_conversation_preserves_state(self, client: AsyncClient):
         """Test that follow-up queries to existing conversation preserve state."""
         # First query
         response1 = await client.post(
@@ -127,6 +128,7 @@ class TestRouterStatePersistenceIntegration:
         
         # Get initial state
         state1 = await conversation_state_manager.get_state(conversation_id)
+        assert state1 is not None
         initial_timestamp = state1.session_start_time
         
         # Second query with same conversation_id (simulate multi-turn)
@@ -145,6 +147,7 @@ class TestRouterStatePersistenceIntegration:
         
         # Get updated state
         state2 = await conversation_state_manager.get_state(conversation_id)
+        assert state2 is not None
         
         # Verify state was preserved (session_start_time shouldn't change)
         assert state2.session_start_time == initial_timestamp
@@ -153,7 +156,7 @@ class TestRouterStatePersistenceIntegration:
         assert state2.updated_at >= state1.updated_at
     
     @pytest.mark.asyncio
-    async def test_user_context_merging_on_follow_up(self, client):
+    async def test_user_context_merging_on_follow_up(self, client: AsyncClient):
         """Test that user context is merged correctly on follow-up requests."""
         # First query with initial context
         response1 = await client.post(
@@ -185,13 +188,14 @@ class TestRouterStatePersistenceIntegration:
         
         # Get final state
         state = await conversation_state_manager.get_state(conversation_id)
+        assert state is not None
         
         # Verify context was merged (user_id preserved, session_id updated)
         assert state.metadata["user_context"]["user_id"] == "user-123"
         assert state.metadata["user_context"]["session_id"] == "session-xyz"
     
     @pytest.mark.asyncio
-    async def test_correlation_id_stored_in_metadata(self, client):
+    async def test_correlation_id_stored_in_metadata(self, client: AsyncClient):
         """Test that correlation ID from headers is stored in metadata."""
         correlation_id = "test-corr-12345"
         
@@ -209,10 +213,11 @@ class TestRouterStatePersistenceIntegration:
         
         # Verify correlation_id in persisted state
         state = await conversation_state_manager.get_state(conversation_id)
+        assert state is not None
         assert state.metadata.get("correlation_id") == correlation_id
     
     @pytest.mark.asyncio
-    async def test_state_persistence_before_routing_decisions(self, client):
+    async def test_state_persistence_before_routing_decisions(self, client: AsyncClient):
         """Test that state is persisted BEFORE routing decisions are made."""
         # This test verifies the architectural requirement that state persistence
         # happens at Router entry, not after routing decisions.
@@ -245,7 +250,7 @@ class TestStatePersistenceFields:
     """Tests to verify all required state fields are persisted correctly."""
     
     @pytest.mark.asyncio
-    async def test_all_srs_fields_initialized(self, client):
+    async def test_all_srs_fields_initialized(self, client: AsyncClient):
         """Verify all 18 SRS-required fields are initialized."""
         response = await client.post(
             "/api/v1/query",
@@ -254,6 +259,7 @@ class TestStatePersistenceFields:
         
         conversation_id = response.json()["conversation_id"]
         state = await conversation_state_manager.get_state(conversation_id)
+        assert state is not None
         
         # Core identity fields
         assert state.conversation_id is not None
@@ -292,7 +298,7 @@ class TestStatePersistenceFields:
         assert isinstance(state.metadata, dict)
     
     @pytest.mark.asyncio
-    async def test_state_serialization_roundtrip(self, client):
+    async def test_state_serialization_roundtrip(self, client: AsyncClient):
         """Test that state can be serialized and deserialized correctly."""
         response = await client.post(
             "/api/v1/query",
@@ -303,6 +309,7 @@ class TestStatePersistenceFields:
         
         # Get state
         state1 = await conversation_state_manager.get_state(conversation_id)
+        assert state1 is not None
         
         # Serialize to dict
         state_dict = state1.to_dict()
@@ -327,7 +334,7 @@ class TestRouterPersistenceErrorHandling:
     """Tests for error handling in state persistence."""
     
     @pytest.mark.asyncio
-    async def test_persistence_failure_returns_error(self, client):
+    async def test_persistence_failure_returns_error(self, client: AsyncClient):
         """Test that persistence failures are handled gracefully."""
         # Mock state manager to fail persistence
         from unittest.mock import patch

@@ -449,6 +449,16 @@ class ConversationStateManager:
         self._in_memory_store.clear()
         self._initialized = False
     
+    @property
+    def is_initialized(self) -> bool:
+        """
+        Check if the state manager has been initialized.
+        
+        Returns:
+            True if initialized, False otherwise.
+        """
+        return self._initialized
+    
     def _generate_conversation_id(self) -> str:
         """Generate a new UUID v4 conversation ID (internal)."""
         return str(uuid.uuid4())
