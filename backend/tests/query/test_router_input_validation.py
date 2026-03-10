@@ -181,20 +181,20 @@ class TestValidationErrorMappingBranches:
 
     def test_whitespace_query_maps_to_query_empty(self):
         """Whitespace-only query should map to QUERY_EMPTY."""
-        try:
+        with pytest.raises(ValidationError) as exc_info:
             RouterRequest(query="   \n\t   ")
-        except ValidationError as e:
-            code, msg = map_validation_error_to_router_error(e)
-            assert code == RouterErrorCode.QUERY_EMPTY
+        
+        code, msg = map_validation_error_to_router_error(exc_info.value)
+        assert code == RouterErrorCode.QUERY_EMPTY
 
     def test_null_byte_query_maps_to_invalid_query(self):
         """Null-byte query should map to INVALID_QUERY."""
-        try:
+        with pytest.raises(ValidationError) as exc_info:
             RouterRequest(query="test\x00value")
-        except ValidationError as e:
-            code, msg = map_validation_error_to_router_error(e)
-            assert code == RouterErrorCode.INVALID_QUERY
-            assert "null" in msg.lower()
+        
+        code, msg = map_validation_error_to_router_error(exc_info.value)
+        assert code == RouterErrorCode.INVALID_QUERY
+        assert "null" in msg.lower()
 
     def test_empty_errors_list_maps_to_invalid_request(self):
         """An empty errors list should fall back to INVALID_REQUEST."""
@@ -209,19 +209,19 @@ class TestValidationErrorMappingBranches:
 
     def test_missing_query_field_maps_to_query_empty(self):
         """A missing 'query' field should map to QUERY_EMPTY."""
-        try:
+        with pytest.raises(ValidationError) as exc_info:
             RouterRequest.model_validate({})
-        except ValidationError as e:
-            code, msg = map_validation_error_to_router_error(e)
-            assert code == RouterErrorCode.QUERY_EMPTY
+        
+        code, msg = map_validation_error_to_router_error(exc_info.value)
+        assert code == RouterErrorCode.QUERY_EMPTY
 
     def test_url_encoded_null_maps_to_invalid_query(self):
         """URL-encoded null byte (%00) should map to INVALID_QUERY."""
-        try:
+        with pytest.raises(ValidationError) as exc_info:
             RouterRequest(query="hello%00world")
-        except ValidationError as e:
-            code, msg = map_validation_error_to_router_error(e)
-            assert code == RouterErrorCode.INVALID_QUERY
+        
+        code, msg = map_validation_error_to_router_error(exc_info.value)
+        assert code == RouterErrorCode.INVALID_QUERY
 
 
 # ---------------------------------------------------------------------------
