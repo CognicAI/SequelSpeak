@@ -26,6 +26,7 @@ class ErrorCode(str, Enum):
     
     # Validation errors
     INVALID_URL = "INVALID_URL"
+    PROFILE_NOT_FOUND = "PROFILE_NOT_FOUND"
     
     # Catch-all for unexpected errors
     CONNECTION_ERROR = "CONNECTION_ERROR"
