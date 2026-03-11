@@ -12,6 +12,7 @@ Tests cover:
 import sys
 import os
 import time
+from unittest.mock import patch
 import pytest
 
 # Add backend to path to import modules - MUST be before any project imports
@@ -269,3 +270,59 @@ class TestHealthEndpointIntegration:
         # Note: This might differ if DB state changes between calls
         assert data1["database"]["status"] in ["healthy", "unhealthy", "not_configured"]
         assert data2["database"]["status"] in ["healthy", "unhealthy", "not_configured"]
+
+    @pytest.mark.asyncio
+    async def test_health_check_settings_failure(self, client: AsyncClient) -> None:
+        """Test health check when settings fail to load."""
+        with patch("api.v1.health.get_settings", side_effect=Exception("Settings error")):
+            response = await client.get("/api/v1/health")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "degraded"
+            assert data["database"]["status"] == "not_configured"
+
+    @pytest.mark.asyncio
+    async def test_health_check_db_unhealthy(self, client: AsyncClient) -> None:
+        """Test health check when database is unhealthy."""
+        from schemas.errors import ConnectionResult, ErrorCode
+        mock_result = ConnectionResult(success=False, message="Unhealthy", error_code=ErrorCode.CONNECTION_ERROR)
+        
+        with patch("api.v1.health.health_monitor.check_connection", return_value=mock_result):
+            # Ensure a URL is "configured" for the test
+            with patch("api.v1.health.get_settings") as mock_settings:
+                mock_settings.return_value.health_check_db_url = "postgresql://user:pass@host/db"
+                mock_settings.return_value.health_check_timeout = 5
+                
+                response = await client.get("/api/v1/health")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "degraded"
+                assert data["database"]["status"] == "unhealthy"
+
+    @pytest.mark.asyncio
+    async def test_health_check_exception_during_check(self, client: AsyncClient) -> None:
+        """Test health check when an exception occurs during the check."""
+        with patch("api.v1.health.health_monitor.check_connection", side_effect=Exception("Unexpected check error")):
+            # Ensure a URL is "configured" for the test
+            with patch("api.v1.health.get_settings") as mock_settings:
+                mock_settings.return_value.health_check_db_url = "postgresql://user:pass@host/db"
+                mock_settings.return_value.health_check_timeout = 5
+                
+                response = await client.get("/api/v1/health")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "degraded"
+                assert data["database"]["status"] == "unhealthy"
+
+    @pytest.mark.asyncio
+    async def test_health_check_critical_fallback(self, client: AsyncClient) -> None:
+        """Test health check critical fallback when EVERYTHING fails."""
+        # Mocking datetime.now to fail to trigger the outermost catch-all
+        with patch("api.v1.health.datetime") as mock_dt:
+            mock_dt.now.side_effect = Exception("Critical fail")
+            response = await client.get("/api/v1/health")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "degraded"
+            assert data["timestamp"] == "1970-01-01T00:00:00"
+
