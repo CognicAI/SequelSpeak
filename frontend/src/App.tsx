@@ -1,5 +1,4 @@
 import { ConnectionForm } from './components/ConnectionForm';
-import { ExpandableChatDemo } from './components/ExpandableChatDemo';
 import {
   SignedIn,
   SignedOut,
@@ -60,10 +59,7 @@ function App() {
         </div>
       </div>
 
-      {/* AI Chat Assistant - Only visible when signed in */}
-      <SignedIn>
-        <ExpandableChatDemo />
-      </SignedIn>
+
     </div>
   );
 }
