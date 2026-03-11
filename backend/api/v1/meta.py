@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from fastapi import APIRouter
 from config import settings
+from utils.circuit_breaker import CircuitState, db_circuit_breaker
 
 router = APIRouter()
 
@@ -30,10 +31,10 @@ async def get_version():
     Useful for debugging and ensuring correct deployment version.
     """
     return {
-        "version": "1.0.0",
+        "version": settings.app_version,
         "api_version": "v1",
         "environment": settings.environment,
-        "build_date": "2026-02-05",  # Could be injected at build time via CI/CD
+        "build_date": settings.build_date,
         "app_name": settings.app_name,
     }
 
@@ -50,11 +51,23 @@ async def get_status():
     Get detailed API status.
     
     Provides operational status, uptime, and health of individual endpoints.
+    Reports real circuit breaker state for connection endpoint.
     Used for monitoring and service health checks.
     """
     # Calculate uptime
     uptime_seconds = int(time.time() - _START_TIME)
-    
+
+    # Reflect real circuit breaker state for the connection endpoint
+    cb = db_circuit_breaker
+    if cb is None or not settings.circuit_breaker_enabled:
+        connection_status = "operational"
+    elif cb.state == CircuitState.OPEN:
+        connection_status = "degraded"
+    elif cb.state == CircuitState.HALF_OPEN:
+        connection_status = "recovering"
+    else:
+        connection_status = "operational"
+
     return {
         "status": "operational",
         "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
@@ -62,7 +75,7 @@ async def get_status():
         "uptime_human": _format_uptime(uptime_seconds),
         "endpoints": {
             "health": "operational",
-            "connections": "operational",
+            "connections": connection_status,
             "meta": "operational",
         },
         "features": {
