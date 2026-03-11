@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import SQLModel, Field
 import uuid
@@ -13,5 +13,6 @@ class Profile(SQLModel, table=True):
     port: str
     username: str
     database: str
-    created_at: datetime = Field(default_factory=lambda: datetime.utcnow())
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
     last_used: Optional[datetime] = None
