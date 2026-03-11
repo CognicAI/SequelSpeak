@@ -1,15 +1,40 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { saveProfile, getProfiles, deleteProfile } from '../profileStorage';
+import { apiClient } from '../api/client';
+
+vi.mock('../api/client', () => ({
+    apiClient: {
+        getProfiles: vi.fn(),
+        createProfile: vi.fn(),
+        updateProfile: vi.fn(),
+        deleteProfile: vi.fn(),
+    }
+}));
 
 describe('profileStorage', () => {
+    const mockToken = "fake-jwt-token";
+
     beforeEach(() => {
+        vi.clearAllMocks();
         localStorage.clear();
     });
 
     describe('saveProfile', () => {
-        it('saves a new profile and marks it as new', () => {
+        it('saves a new profile and marks it as new', async () => {
             const url = 'postgres://user:pass@localhost:5432/testdb';
-            const result = saveProfile(url);
+            
+            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([]);
+            vi.mocked(apiClient.createProfile).mockResolvedValueOnce({
+                id: 'new-id',
+                name: 'user@localhost/testdb',
+                host: 'localhost',
+                port: '5432',
+                username: 'user',
+                database: 'testdb',
+                createdAt: new Date().toISOString()
+            } as any);
+
+            const result = await saveProfile(url, mockToken);
 
             expect(result).not.toBeNull();
             expect(result?.isNew).toBe(true);
@@ -17,63 +42,74 @@ describe('profileStorage', () => {
             expect(result?.profile.port).toBe('5432');
             expect(result?.profile.username).toBe('user');
             expect(result?.profile.database).toBe('testdb');
+            expect(apiClient.createProfile).toHaveBeenCalledWith(expect.objectContaining({
+                password: 'pass'
+            }), mockToken);
         });
 
-        it('updates an existing profile (same connection) and marks it as not new', () => {
+        it('updates an existing profile (same connection) and marks it as not new', async () => {
             const url = 'postgres://user:pass@localhost:5432/testdb';
-            const firstSave = saveProfile(url);
-            const secondSave = saveProfile(url);
+            
+            const existingProfile = {
+                id: 'existing-id',
+                name: 'user@localhost/testdb',
+                host: 'localhost',
+                port: '5432',
+                username: 'user',
+                database: 'testdb',
+                createdAt: new Date().toISOString()
+            };
 
-            expect(secondSave?.isNew).toBe(false);
-            expect(secondSave?.profile.id).toBe(firstSave?.profile.id);
+            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([existingProfile] as any);
+            vi.mocked(apiClient.updateProfile).mockResolvedValueOnce(existingProfile as any);
+
+            const result = await saveProfile(url, mockToken);
+
+            expect(result?.isNew).toBe(false);
+            expect(result?.profile.id).toBe('existing-id');
+            expect(apiClient.updateProfile).toHaveBeenCalledWith('existing-id', expect.objectContaining({
+                password: 'pass'
+            }), mockToken);
         });
 
-        it('does NOT store the password in localStorage', () => {
-            const url = 'postgres://user:supersecret@localhost:5432/testdb';
-            saveProfile(url);
-
-            const raw = localStorage.getItem('sequel-speak-profiles') ?? '';
-            expect(raw).not.toContain('supersecret');
-        });
-
-        it('returns null for a malformed URL', () => {
-            const result = saveProfile('not-a-postgres-url');
+        it('returns null for a malformed URL', async () => {
+            const result = await saveProfile('not-a-postgres-url', mockToken);
             expect(result).toBeNull();
         });
     });
 
     describe('getProfiles', () => {
-        it('returns an empty array when no profiles are stored', () => {
-            expect(getProfiles()).toEqual([]);
+        it('returns an empty array when no profiles are returned by api', async () => {
+            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([]);
+            expect(await getProfiles(mockToken)).toEqual([]);
         });
 
-        it('returns only valid profiles (filters corrupted data)', () => {
-            // Inject invalid data directly into localStorage
+        it('migrates from local storage if available', async () => {
             localStorage.setItem(
                 'sequel-speak-profiles',
-                JSON.stringify([{ id: 'bad-id', name: 'broken' }]),
+                JSON.stringify([{ id: 'old-id', name: 'migrated', host: 'h', port: '5432', username: 'u', database: 'd' }]),
             );
-            expect(getProfiles()).toEqual([]);
-        });
+            
+            vi.mocked(apiClient.createProfile).mockResolvedValueOnce({} as any);
+            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([{ id: 'new-id' }] as any);
 
-        it('returns saved profiles after saving', () => {
-            saveProfile('postgres://user:pass@host:5432/db');
-            const profiles = getProfiles();
+            const profiles = await getProfiles(mockToken);
             expect(profiles).toHaveLength(1);
+            expect(apiClient.createProfile).toHaveBeenCalled();
+            expect(localStorage.getItem('sequel-speak-profiles')).toBeNull();
         });
     });
 
     describe('deleteProfile', () => {
-        it('removes an existing profile and returns true', () => {
-            const result = saveProfile('postgres://user:pass@host:5432/db');
-            const id = result!.profile.id;
-
-            expect(deleteProfile(id)).toBe(true);
-            expect(getProfiles()).toHaveLength(0);
+        it('removes an existing profile and returns true', async () => {
+            vi.mocked(apiClient.deleteProfile).mockResolvedValueOnce(undefined as void);
+            expect(await deleteProfile('some-id', mockToken)).toBe(true);
+            expect(apiClient.deleteProfile).toHaveBeenCalledWith('some-id', mockToken);
         });
 
-        it('returns false when profile is not found', () => {
-            expect(deleteProfile('00000000-0000-4000-8000-000000000000')).toBe(false);
+        it('returns false when api throws', async () => {
+            vi.mocked(apiClient.deleteProfile).mockRejectedValueOnce(new Error('fail'));
+            expect(await deleteProfile('00000000-0000-4000-8000-000000000000', mockToken)).toBe(false);
         });
     });
 });

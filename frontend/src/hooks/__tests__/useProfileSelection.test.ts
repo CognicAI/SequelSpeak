@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useProfileSelection } from '../useProfileSelection';
-import type { ProfileAdapter } from '../../data/localStorageProfileAdapter';
+import type { ProfileAdapter } from '../../data/apiProfileAdapter';
 import type { ConnectionProfile } from '../../types/profile';
+
+vi.mock('@clerk/clerk-react', () => ({
+    useAuth: () => ({
+        getToken: vi.fn().mockResolvedValue('fake-token'),
+        isSignedIn: true,
+    })
+}));
 
 /** Creates a fake profile with sane defaults */
 function makeProfile(overrides: Partial<ConnectionProfile> = {}): ConnectionProfile {
@@ -22,8 +29,8 @@ function makeProfile(overrides: Partial<ConnectionProfile> = {}): ConnectionProf
 function makeMockAdapter(initial: ConnectionProfile[] = []): ProfileAdapter {
     const store = [...initial];
     return {
-        getProfiles: () => store,
-        getProfileById: (id: string) => store.find(p => p.id === id),
+        getProfiles: async () => store,
+        getProfileById: async (id: string, _token: string) => store.find(p => p.id === id),
     };
 }
 
@@ -41,16 +48,26 @@ describe('useProfileSelection', () => {
         expect(result.current.isLoading).toBe(false);
     });
 
-    it('loads profiles from the adapter on mount', () => {
+    it('loads profiles from the adapter on mount', async () => {
         const profile = makeProfile();
         const adapter = makeMockAdapter([profile]);
+        
+        // renderHook acts like mounting
         const { result } = renderHook(() => useProfileSelection({ adapter }));
 
+        expect(result.current.isLoading).toBe(true);
+        // Wait for async load to finish
+        // We can just await the macrotask / promises
+        await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        });
+
+        expect(result.current.isLoading).toBe(false);
         expect(result.current.profiles).toHaveLength(1);
         expect(result.current.profiles[0].id).toBe(profile.id);
     });
 
-    it('calls onProfileSelect callback when selecting a profile', () => {
+    it('calls onProfileSelect callback when selecting a profile', async () => {
         const profile = makeProfile();
         const adapter = makeMockAdapter([profile]);
         const onProfileSelect = vi.fn();
@@ -58,6 +75,10 @@ describe('useProfileSelection', () => {
         const { result } = renderHook(() =>
             useProfileSelection({ adapter, onProfileSelect }),
         );
+        
+        await act(async () => {
+             await new Promise(resolve => setTimeout(resolve, 0));
+        });
 
         act(() => {
             result.current.selectProfile(profile.id);
@@ -67,7 +88,7 @@ describe('useProfileSelection', () => {
         expect(onProfileSelect).toHaveBeenCalledWith(profile);
     });
 
-    it('clears active profile on clearSelection', () => {
+    it('clears active profile on clearSelection', async () => {
         const profile = makeProfile();
         const adapter = makeMockAdapter([profile]);
         const onProfileClear = vi.fn();
@@ -75,6 +96,10 @@ describe('useProfileSelection', () => {
         const { result } = renderHook(() =>
             useProfileSelection({ adapter, onProfileClear }),
         );
+        
+        await act(async () => {
+             await new Promise(resolve => setTimeout(resolve, 0));
+        });
 
         act(() => { result.current.selectProfile(profile.id); });
         act(() => { result.current.clearSelection(); });
@@ -83,28 +108,36 @@ describe('useProfileSelection', () => {
         expect(onProfileClear).toHaveBeenCalledOnce();
     });
 
-    it('sets error state when adapter throws', () => {
+    it('sets error state when adapter throws', async () => {
         const badAdapter: ProfileAdapter = {
             ...makeMockAdapter(),
-            getProfiles: () => { throw new Error('Storage failure'); },
+            getProfiles: async () => { throw new Error('Storage failure'); },
         };
 
         const { result } = renderHook(() => useProfileSelection({ adapter: badAdapter }));
+        
+        await act(async () => {
+             await new Promise(resolve => setTimeout(resolve, 0));
+        });
 
         expect(result.current.error).toBe('Storage failure');
         expect(result.current.profiles).toEqual([]);
     });
 
-    it('clears activeProfileId when the active profile is absent after reload', () => {
+    it('clears activeProfileId when the active profile is absent after reload', async () => {
         // Start with one profile and select it.
         const profile = makeProfile();
         let availableProfiles: ConnectionProfile[] = [profile];
         const adapter: ProfileAdapter = {
-            getProfiles: () => availableProfiles,
-            getProfileById: (id) => availableProfiles.find(p => p.id === id),
+            getProfiles: async () => availableProfiles,
+            getProfileById: async (id) => availableProfiles.find(p => p.id === id),
         };
 
         const { result } = renderHook(() => useProfileSelection({ adapter }));
+        
+        await act(async () => {
+             await new Promise(resolve => setTimeout(resolve, 0));
+        });
 
         act(() => { result.current.selectProfile(profile.id); });
         expect(result.current.activeProfileId).toBe(profile.id);
@@ -113,7 +146,10 @@ describe('useProfileSelection', () => {
         availableProfiles = [];
 
         // Trigger a reload — loadProfiles now returns an empty list.
-        act(() => { result.current.refreshProfiles(); });
+        await act(async () => { 
+            result.current.refreshProfiles();
+            await new Promise(resolve => setTimeout(resolve, 0));
+        });
 
         // The cleanup effect detects the active profile is gone and nulls the ID.
         expect(result.current.activeProfileId).toBeNull();

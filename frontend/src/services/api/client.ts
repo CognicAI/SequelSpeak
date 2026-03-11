@@ -9,6 +9,7 @@
  */
 
 import type { TestConnectionSuccessResponse } from '../../types/api';
+import type { ConnectionProfile } from '../../types/profile';
 import { ApiError } from './errors';
 
 class ApiClient {
@@ -86,9 +87,11 @@ class ApiClient {
      * @param signal        - Optional AbortSignal for cancellation
      */
     async testConnection(
-        connectionUrl: string,
+        connectionUrl: string | undefined,
         token: string,
         signal?: AbortSignal,
+        profileId?: string,
+        password?: string,
     ): Promise<TestConnectionSuccessResponse> {
         return this.request<TestConnectionSuccessResponse>(
             '/api/v1/utils/test-connection',
@@ -97,10 +100,44 @@ class ApiClient {
                 headers: {
                     Authorization: `Bearer ${token}`,
                 },
-                body: JSON.stringify({ connection_url: connectionUrl }),
+                body: JSON.stringify({ 
+                    connection_url: connectionUrl, 
+                    profile_id: profileId,
+                    password: password 
+                }),
                 signal,
             },
         );
+    }
+
+    async getProfiles(token: string): Promise<ConnectionProfile[]> {
+        return this.request<ConnectionProfile[]>('/api/v1/profiles', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+        });
+    }
+
+    async createProfile(profileData: any, token: string): Promise<ConnectionProfile> {
+        return this.request<ConnectionProfile>('/api/v1/profiles', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: JSON.stringify(profileData),
+        });
+    }
+
+    async updateProfile(profileId: string, profileData: any, token: string): Promise<ConnectionProfile> {
+        return this.request<ConnectionProfile>(`/api/v1/profiles/${profileId}`, {
+            method: 'PUT',
+            headers: { Authorization: `Bearer ${token}` },
+            body: JSON.stringify(profileData),
+        });
+    }
+
+    async deleteProfile(profileId: string, token: string): Promise<void> {
+        return this.request<void>(`/api/v1/profiles/${profileId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+        });
     }
 }
 

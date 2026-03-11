@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Security Settings
     secret_key: Optional[str] = None  # Required in production for session/JWT
     allowed_origins: str = "http://localhost:3000,http://localhost:5173"
+    internal_database_url: Optional[str] = None
     
     # Database Settings
     db_connection_timeout: int = 10  # Database connection timeout in seconds
