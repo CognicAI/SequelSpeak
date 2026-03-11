@@ -6,8 +6,9 @@ the Router request schema. This is the entry point for all query requests.
 """
 
 import logging
-from typing import Any
-from fastapi import APIRouter, status, Request
+from datetime import datetime, timezone
+from typing import Any, Dict
+from fastapi import APIRouter, status, Request, Depends
 from pydantic import ValidationError
 from schemas.router import (
     RouterRequest,
@@ -18,6 +19,7 @@ from schemas.router import (
 )
 from services.conversation_state import conversation_state_manager
 from services.router_service import get_router_service
+from utils.auth import verify_clerk_token
 from utils.security import sanitize_user_context_for_log
 
 router = APIRouter()
@@ -110,7 +112,11 @@ any LLM processing - it simply validates and initializes the request.
     },
     tags=["Query"]
 )
-async def initialize_query(request: Request, payload: RouterRequest) -> RouterInitResponse:
+async def initialize_query(
+    request: Request,
+    payload: RouterRequest,
+    user_claims: Dict[str, Any] = Depends(verify_clerk_token),
+) -> RouterInitResponse:
     """
     Validate and initialize a natural language query request.
     
@@ -127,12 +133,15 @@ async def initialize_query(request: Request, payload: RouterRequest) -> RouterIn
     Raises:
         HTTPException: 400 if validation fails (handled by exception handler)
     """
+    # Extract authenticated user ID from JWT claims
+    user_id = str(user_claims.get("sub", "unknown"))
+
     # Get correlation ID from request headers (set by middleware)
     correlation_id = request.headers.get("X-Correlation-ID")
-    
-    # Log the incoming request (securely - no sensitive data)
+
+    # Log the incoming request (securely - no sensitive data, truncated user_id)
     logger.info(
-        f"Query request received: query_length={len(payload.query)}, "
+        f"Query request received by user={user_id[:8]}...: query_length={len(payload.query)}, "
         f"conversation_id={'provided' if payload.conversation_id else 'not_provided'}",
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
@@ -191,8 +200,6 @@ async def initialize_query(request: Request, payload: RouterRequest) -> RouterIn
         f"Conversation initialized: conversation_id={conversation_id}, user_context={safe_ctx}",
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
-    
-    from datetime import datetime, timezone
     
     response = RouterInitResponse(
         conversation_id=conversation_id,

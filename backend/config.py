@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     
     # Connection Pool Settings
     db_pool_min_size: int = 1  # Minimum number of connections in pool
-    db_pool_max_size: int = 5  # Maximum number of connections in pool
+    db_pool_max_size: int = 10  # Maximum number of connections in pool
     db_pool_timeout: int = 30  # Pool connection timeout in seconds
     db_pool_max_idle: Optional[int] = None  # Maximum idle time for connections (seconds)
     
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     redis_password: Optional[str] = None  # Redis authentication password
     redis_ssl: bool = False  # Enable SSL/TLS for Redis connection
     redis_timeout: int = 5  # Redis connection timeout in seconds
-    conversation_state_ttl: int = 86400  # Conversation state TTL in seconds (24 hours)
+    conversation_state_ttl: int = 604800  # Conversation state TTL in seconds (7 days)
 
     # Pydantic v2 configuration
     model_config = SettingsConfigDict(
