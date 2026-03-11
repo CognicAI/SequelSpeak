@@ -53,15 +53,14 @@ class TestVersionEndpoint:
         data = response.json()
         
         # Check version format
-        assert data["version"] == "1.0.0"
+        assert data["version"] == settings.app_version
         assert data["api_version"] == "v1"
         
         # Check environment matches config
         assert data["environment"] == settings.environment
         
-        # Check build date format (YYYY-MM-DD)
-        assert len(data["build_date"]) == 10
-        assert data["build_date"].count("-") == 2
+        # Check build date format matches config
+        assert data["build_date"] == settings.build_date
         
         # Check app name matches config
         assert data["app_name"] == settings.app_name

@@ -7,6 +7,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from config import settings
 from utils.auth import verify_clerk_token
+import logging
 
 router = APIRouter()
 
@@ -101,7 +102,6 @@ async def test_connection(
     # Log authenticated request (user_id from JWT)
     user_id = user_claims.get("sub", "unknown")
     user_id_str = str(user_id)
-    import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Connection test requested by user: {user_id_str[:8]}...")
     

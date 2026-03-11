@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     # Metrics Settings
     metrics_enabled: bool = True  # Enable Prometheus metrics collection
     app_version: str = "1.0.0"  # Application version for metrics labeling
+    build_date: str = "unknown"  # Application build date
     
     # Redis Settings (Conversation State Storage)
     redis_enabled: bool = True  # Enable Redis-backed conversation state

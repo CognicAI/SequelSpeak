@@ -107,7 +107,7 @@ async def health_check() -> JSONResponse:
         try:
             result = await health_monitor.check_connection(
                 url=check_url,
-                timeout=getattr(settings, 'health_check_timeout', 2)
+                timeout=settings.health_check_timeout
             )
             
             elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -136,7 +136,7 @@ async def health_check() -> JSONResponse:
                         "database": {
                             "configured": True,
                             "status": "unhealthy",
-                            "latency_ms": None
+                            "latency_ms": elapsed_ms  # Report actual elapsed even on failure
                         }
                     }
                 )
@@ -145,7 +145,7 @@ async def health_check() -> JSONResponse:
             # Catch ANY exception during health check
             elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
             logger.error(f"Health check error: {type(e).__name__}", exc_info=False)
-            
+
             return JSONResponse(
                 status_code=200,
                 content={
@@ -154,7 +154,7 @@ async def health_check() -> JSONResponse:
                     "database": {
                         "configured": True,
                         "status": "unhealthy",
-                        "latency_ms": None
+                        "latency_ms": elapsed_ms  # Report actual elapsed even on exception
                     }
                 }
             )
