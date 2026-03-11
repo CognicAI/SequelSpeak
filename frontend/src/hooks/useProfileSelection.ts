@@ -11,9 +11,10 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import type { ConnectionProfile } from '../types/profile';
-import { localStorageProfileAdapter, type ProfileAdapter } from '../data/localStorageProfileAdapter';
-import { deleteProfile as deleteProfileFromStorage, updateProfileName } from '../services/profileStorage';
+import { apiProfileAdapter, type ProfileAdapter } from '../data/apiProfileAdapter';
+import { deleteProfile as deleteProfileFromBackend, updateProfileName } from '../services/profileStorage';
 
 
 
@@ -25,7 +26,7 @@ interface ProfileSelectionState {
 }
 
 interface UseProfileSelectionOptions {
-    /** Optional custom adapter (defaults to localStorageProfileAdapter) */
+    /** Optional custom adapter (defaults to apiProfileAdapter) */
     adapter?: ProfileAdapter;
     /** Callback when a profile is selected */
     onProfileSelect?: (profile: ConnectionProfile) => void;
@@ -51,9 +52,9 @@ interface UseProfileSelectionReturn extends ProfileSelectionState {
     /** Refresh profiles from adapter */
     refreshProfiles: () => void;
     /** Delete a profile by ID */
-    deleteProfile: (profileId: string) => boolean;
+    deleteProfile: (profileId: string) => Promise<boolean>;
     /** Rename a profile */
-    renameProfile: (profileId: string, newName: string) => boolean;
+    renameProfile: (profileId: string, newName: string) => Promise<boolean>;
 }
 
 /**
@@ -61,12 +62,14 @@ interface UseProfileSelectionReturn extends ProfileSelectionState {
  */
 export function useProfileSelection(options: UseProfileSelectionOptions = {}): UseProfileSelectionReturn {
     const {
-        adapter = localStorageProfileAdapter,
+        adapter = apiProfileAdapter,
         onProfileSelect,
         onProfileClear,
         onProfileDelete,
         onProfileRename,
     } = options;
+
+    const { getToken, isSignedIn } = useAuth();
 
     // State
     const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
@@ -81,12 +84,20 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
      * Load profiles from adapter.
      * Defensive: handles adapter failures gracefully.
      */
-    const loadProfiles = useCallback(() => {
+    const loadProfiles = useCallback(async () => {
+        if (!isSignedIn) {
+            setProfiles([]);
+            setIsLoading(false);
+            return;
+        }
+
         setIsLoading(true);
         setError(null);
 
         try {
-            const loadedProfiles = adapter.getProfiles();
+            const token = await getToken();
+            if (!token) throw new Error("No token available");
+            const loadedProfiles = await adapter.getProfiles(token);
 
             // Defensive: ensure we have an array
             if (!Array.isArray(loadedProfiles)) {
@@ -115,8 +126,10 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
 
     // Load profiles on mount
     useEffect(() => {
-        loadProfiles();
-    }, [loadProfiles]);
+        if (isSignedIn) {
+            loadProfiles();
+        }
+    }, [loadProfiles, isSignedIn]);
 
     /**
      * Select a profile by ID.
@@ -200,15 +213,17 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
      * Delete a profile by ID.
      * Clears selection if the deleted profile was active.
      */
-    const deleteProfile = useCallback((profileId: string): boolean => {
+    const deleteProfile = useCallback(async (profileId: string): Promise<boolean> => {
         // Defensive: validate input
         if (!profileId || typeof profileId !== 'string') {
             console.warn('Invalid profile ID provided to deleteProfile');
             return false;
         }
 
-        // Attempt to delete from storage
-        const success = deleteProfileFromStorage(profileId);
+        // Attempt to delete from backend
+        const token = await getToken();
+        if(!token) return false;
+        const success = await deleteProfileFromBackend(profileId, token);
 
         if (success) {
             // Clear selection if the deleted profile was active
@@ -219,7 +234,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
             }
 
             // Refresh profiles to update the list
-            loadProfiles();
+            await loadProfiles();
 
             // Notify parent component
             onProfileDelete?.(profileId);
@@ -231,7 +246,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
     /**
      * Rename a profile.
      */
-    const renameProfile = useCallback((profileId: string, newName: string): boolean => {
+    const renameProfile = useCallback(async (profileId: string, newName: string): Promise<boolean> => {
         // Defensive: validate input
         if (!profileId || typeof profileId !== 'string') {
             console.warn('Invalid profile ID provided to renameProfile');
@@ -243,12 +258,14 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
             return false;
         }
 
-        // Attempt to update name in storage
-        const success = updateProfileName(profileId, newName);
+        // Attempt to update name in backend
+        const token = await getToken();
+        if(!token) return false;
+        const success = await updateProfileName(profileId, newName, token);
 
         if (success) {
             // Refresh profiles to update the list
-            loadProfiles();
+            await loadProfiles();
 
             // Notify parent component
             onProfileRename?.(profileId, newName);

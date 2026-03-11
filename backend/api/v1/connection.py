@@ -1,13 +1,16 @@
 from fastapi import APIRouter, status, Request, Depends
 from typing import Dict, Any
 from schemas.connection import ConnectionRequest, ConnectionTestResponse, ConnectionErrorDetail
+from schemas.errors import ErrorCode
 from services.db_connection_service import DBConnectionService
 from exceptions import DatabaseConnectionError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from config import settings
 from utils.auth import verify_clerk_token
+from services.profile_service import profile_service
 import logging
+from urllib.parse import quote_plus
 
 router = APIRouter()
 
@@ -105,11 +108,50 @@ async def test_connection(
     logger = logging.getLogger(__name__)
     logger.info(f"Connection test requested by user: {user_id_str[:8]}...")
     
+    # Check if a profile_id was provided
+    connection_url = body.connection_url
+    password = body.password
+    
+    if body.profile_id:
+        profile_data = await profile_service.get_profile(user_id, body.profile_id)
+        if not profile_data:
+            raise DatabaseConnectionError(
+                detail="Profile not found or access denied.",
+                error_code=ErrorCode.PROFILE_NOT_FOUND
+            )
+        
+        # 1. Try to get password from cache if not provided in request
+        if not password:
+            from services.credential_cache import credential_cache
+            password = await credential_cache.get_password(user_id, body.profile_id)
+        
+        # 2. If we have a password (either from request or cache), update cache
+        if password:
+            from services.credential_cache import credential_cache
+            await credential_cache.store_password(user_id, body.profile_id, password)
+        else:
+            # 3. No password available and not in cache
+            raise DatabaseConnectionError(
+                detail="Password required for this connection. Please provide a password.",
+                error_code=ErrorCode.AUTH_FAILED  # We can refine this to a specific "CREDENTIALS_REQUIRED" code later
+            )
+            
+        # Construct url
+        username = quote_plus(profile_data.username)
+        password_quoted = quote_plus(password)
+        connection_url = f"postgresql://{username}:{password_quoted}@{profile_data.host}:{profile_data.port}/{profile_data.database}"
+
+    if not connection_url:
+        raise DatabaseConnectionError(
+            detail="Either connection_url or profile_id is required.",
+            error_code=ErrorCode.INVALID_URL
+        )
+    
     # Initialize service with default dependencies (production configuration)
     db_service = DBConnectionService()
     
     # 1. Structural Validation
-    validation_result = db_service.parse_and_verify_url(body.connection_url)
+    validation_result = db_service.parse_and_verify_url(connection_url)
     if not validation_result.success:
         raise DatabaseConnectionError(
             detail=validation_result.message,
@@ -117,7 +159,7 @@ async def test_connection(
         )
 
     # 2. Connection Test (one-shot, no pooling)
-    connection_result = await db_service.test_connection_oneshot(body.connection_url)
+    connection_result = await db_service.test_connection_oneshot(connection_url)
     
     if connection_result.success:
         return ConnectionTestResponse(

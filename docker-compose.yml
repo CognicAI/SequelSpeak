@@ -12,8 +12,11 @@ services:
     environment:
       # Redis connection (for future ConversationState)
       - REDIS_URL=redis://redis:6379/0
+      - INTERNAL_DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/sequelspeak
     depends_on:
       redis:
+        condition: service_healthy
+      db:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
@@ -21,6 +24,27 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+    networks:
+      - sequelspeak-network
+
+  # Internal DB - PostgreSQL (for profiles)
+  db:
+    image: postgres:16-alpine
+    container_name: sequelspeak-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=sequelspeak
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
     networks:
       - sequelspeak-network
@@ -36,6 +60,8 @@ services:
         # Clerk Publishable Key (needed at build time for frontend)
         VITE_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
     container_name: sequelspeak-frontend
+    env_file:
+      - .env.docker
     ports:
       - "80:80"
     depends_on:
@@ -81,6 +107,8 @@ services:
 # Named volumes for persistent data
 volumes:
   redis-data:
+    driver: local
+  postgres-data:
     driver: local
 
 # Network for inter-service communication

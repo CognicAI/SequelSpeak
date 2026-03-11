@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
-from api.v1 import connection, health, meta, query
+from api.v1 import connection, health, meta, query, profiles
 from exceptions import DatabaseConnectionError
 from schemas.router import RouterErrorResponse, RouterErrorCode
 from utils.security import mask_connection_url
@@ -19,6 +19,7 @@ from typing import Callable, Awaitable, Any
 from services.connection_pool import pool_manager
 from services.conversation_state import conversation_state_manager
 from services.router_service import initialize_router_service
+from services.profile_service import profile_service
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -86,6 +87,10 @@ async def lifespan(app: FastAPI):
     initialize_router_service(conversation_state_manager)
     logger.info("✓ Router service initialized")
     
+    # Initialize profile service
+    await profile_service.initialize()
+    logger.info("✓ Profile service initialized")
+    
     logger.info("=" * 60)
     logger.info("✓ Configuration validated successfully")
     logger.info("✓ Connection pool manager initialized")
@@ -129,6 +134,9 @@ async def lifespan(app: FastAPI):
     
     await pool_manager.close_all()
     logger.info("✓ Shutdown complete")
+    
+    await profile_service.close()
+    logger.info("✓ Profile service closed")
     logger.info("=" * 60)
 
 app = FastAPI(
@@ -183,6 +191,10 @@ This API uses a **dual authentication model**:
         {
             "name": "Meta",
             "description": "API metadata, version information, and operational status."
+        },
+        {
+            "name": "Profiles",
+            "description": "CRUD operations for user database connection profiles."
         }
     ],
     docs_url="/docs",
@@ -436,6 +448,7 @@ app.include_router(connection.router, prefix="/api/v1/utils", tags=["Connection"
 app.include_router(health.router, prefix="/api/v1", tags=["Health"])
 app.include_router(meta.router, prefix="/api/v1", tags=["Meta"])
 app.include_router(query.router, prefix="/api/v1", tags=["Query"])
+app.include_router(profiles.router, prefix="/api/v1", tags=["Profiles"])
 
 @app.get("/")
 async def root():

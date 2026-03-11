@@ -13,6 +13,7 @@ import { VALIDATION } from '../constants/validation';
 import { UI } from '../constants/ui';
 import { apiClient } from '../services/api/client';
 import { ApiError } from '../services/api/errors';
+import { PasswordPromptModal } from './PasswordPromptModal';
 
 type ConnectionMode = 'url' | 'fields';
 
@@ -27,6 +28,11 @@ export function ConnectionForm() {
     const [user, setUser] = useState('');
     const [password, setPassword] = useState('');
     const [database, setDatabase] = useState('');
+
+    // JIT Password Prompt State
+    const [isPromptOpen, setIsPromptOpen] = useState(false);
+    const [promptError, setPromptError] = useState<string | null>(null);
+    const [promptLoading, setPromptLoading] = useState(false);
 
     /**
      * Auto-fill form fields from a connection profile.
@@ -197,9 +203,11 @@ export function ConnectionForm() {
             }
 
             const data = await apiClient.testConnection(
-                connectionUrl,
+                mode === 'fields' && activeProfileId ? undefined : connectionUrl,
                 token,
                 abortControllerRef.current.signal,
+                mode === 'fields' && activeProfileId ? activeProfileId : undefined,
+                mode === 'fields' ? password : undefined
             );
 
             // Check if recovering from a disconnected state
@@ -208,8 +216,8 @@ export function ConnectionForm() {
                 wasDisconnectedRef.current = false;
             }
 
-            // Save profile to LocalStorage after successful connection
-            const result = saveProfile(connectionUrl);
+            // Save profile to backend after successful connection
+            const result = await saveProfile(connectionUrl, token);
 
             if (result) {
                 // Use the isNew flag to determine if this was a new profile or an update
@@ -243,6 +251,9 @@ export function ConnectionForm() {
                         type: 'error',
                         text: 'Your session has expired. Please sign in again.'
                     });
+                } else if (err.code === 'AUTH_FAILED' && activeProfileId) {
+                    // Trigger the JIT password prompt
+                    setIsPromptOpen(true);
                 } else {
                     setStatusMessage({
                         type: 'error',
@@ -255,6 +266,54 @@ export function ConnectionForm() {
         } finally {
             setIsLoading(false);
             abortControllerRef.current = null;
+        }
+    };
+
+    /**
+     * Handle JIT password submission from the modal
+     */
+    const handlePromptSubmit = async (promptPassword: string) => {
+        if (!activeProfileId) return;
+
+        setPromptLoading(true);
+        setPromptError(null);
+
+        try {
+            const token = await getToken();
+            if (!token) throw new Error('Authentication failed');
+
+            const data = await apiClient.testConnection(
+                undefined,
+                token,
+                undefined,
+                activeProfileId,
+                promptPassword
+            );
+
+            // Success! Cache the password in local state too if we want, 
+            // but the backend already cached it in Redis.
+            
+            // Re-trigger the successful save/update flow if needed,
+            // or just show success.
+            setIsPromptOpen(false);
+            
+            setStatusMessage({
+                type: 'success',
+                text: `${data.message} Credentials cached for this session.`
+            });
+            
+            // Update the connection status
+            setConnectionStatus('connected');
+            wasDisconnectedRef.current = false;
+
+        } catch (err) {
+            if (err instanceof ApiError) {
+                setPromptError(getErrorMessage(err.message));
+            } else {
+                setPromptError('Failed to authenticate. Please try again.');
+            }
+        } finally {
+            setPromptLoading(false);
         }
     };
 
@@ -530,6 +589,15 @@ export function ConnectionForm() {
                     </form>
                 </div>
             </div>
+            {/* JIT Password Prompt */}
+            <PasswordPromptModal
+                isOpen={isPromptOpen}
+                onClose={() => setIsPromptOpen(false)}
+                onSubmit={handlePromptSubmit}
+                profileName={profiles.find(p => p.id === activeProfileId)?.name || 'Database'}
+                error={promptError}
+                isLoading={promptLoading}
+            />
         </div>
     );
 }

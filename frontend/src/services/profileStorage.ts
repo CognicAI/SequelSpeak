@@ -1,419 +1,190 @@
 /**
  * Profile Storage Service
  * 
- * Manages connection profiles in browser LocalStorage.
- * Provides CRUD operations with error handling for corrupted data.
+ * Manages connection profiles in the backend API (migrated from LocalStorage).
  */
 
 import type { ConnectionProfile } from '../types/profile';
-import { VALIDATION } from '../constants/validation';
+import { apiClient } from './api/client';
 
-const STORAGE_KEY = 'sequel-speak-profiles';
-
-/**
- * Generates a UUID v4 string.
- * Uses crypto.randomUUID if available, otherwise falls back to a pseudo-random implementation.
- */
-function generateUUID(): string {
-    // Check if we're in a secure context with crypto.randomUUID available
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-        try {
-            return crypto.randomUUID();
-        } catch (e) {
-            // Fallback if it fails for any reason
-        }
-    }
-
-    // Fallback implementation (RFC 4122 v4 compliant)
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-        const r = Math.random() * 16 | 0;
-        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-}
-
-/**
- * Result of saving a profile, indicating whether it was created or updated
- */
 export interface SaveProfileResult {
     profile: ConnectionProfile;
-    isNew: boolean; // true if newly created, false if updated existing
-}
-
-/** UUID v4 regex used for `id` field validation */
-const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-/**
- * Validates if the data structure matches ConnectionProfile interface.
- * Checks both types and value constraints (UUID format, port range) to
- * reject tampered or corrupted data from LocalStorage.
- */
-function isValidProfile(data: unknown): data is ConnectionProfile {
-    if (!data || typeof data !== 'object') return false;
-
-    const profile = data as Record<string, unknown>;
-
-    // Validate id is a UUID v4 string
-    if (typeof profile.id !== 'string' || !UUID_V4_REGEX.test(profile.id)) return false;
-
-    // Validate required string fields are non-empty strings
-    if (typeof profile.name !== 'string' || profile.name.trim().length === 0) return false;
-    if (typeof profile.host !== 'string' || profile.host.trim().length === 0) return false;
-    if (typeof profile.username !== 'string') return false;
-    if (typeof profile.database !== 'string' || profile.database.trim().length === 0) return false;
-    if (typeof profile.createdAt !== 'string') return false;
-
-    // Validate port is a numeric string within the valid TCP range
-    if (typeof profile.port !== 'string' || !/^\d+$/.test(profile.port)) return false;
-    const portNum = parseInt(profile.port, 10);
-    if (portNum < VALIDATION.PORT_MIN || portNum > VALIDATION.PORT_MAX) return false;
-
-    // lastUsed is optional but must be a string when present
-    if (profile.lastUsed !== undefined && typeof profile.lastUsed !== 'string') return false;
-
-    return true;
-}
-
-/**
- * Safely retrieves and parses profiles from LocalStorage
- * Returns empty array if data is corrupted or missing
- * 
- * PERFORMANCE NOTE: This function is called on every CRUD operation, which means
- * the profile array is parsed from JSON each time. For typical use cases (5-20 profiles),
- * this overhead is negligible (< 1ms). Caching was considered but not implemented due to:
- * - Cross-tab synchronization complexity (would require storage event listeners)
- * - Risk of stale data across browser tabs
- * - Minimal performance benefit for expected dataset size
- * 
- * If performance becomes an issue with 100+ profiles, consider implementing:
- * - In-memory cache with storage event listeners for cross-tab invalidation
- * - Debounced writes to reduce write frequency
- * - IndexedDB for larger datasets
- */
-function getStoredProfiles(): ConnectionProfile[] {
-    try {
-        const data = localStorage.getItem(STORAGE_KEY);
-
-        if (!data) {
-            return [];
-        }
-
-        const parsed = JSON.parse(data);
-
-        if (!Array.isArray(parsed)) {
-            console.warn('Invalid profile data structure in LocalStorage. Expected array.');
-            return [];
-        }
-
-        // Filter out invalid profiles
-        const validProfiles = parsed.filter(isValidProfile);
-
-        if (validProfiles.length !== parsed.length) {
-            console.warn(`Filtered out ${parsed.length - validProfiles.length} invalid profile(s)`);
-        }
-
-        return validProfiles;
-    } catch (error) {
-        console.error('Failed to retrieve profiles from LocalStorage:', error);
-        return [];
-    }
-}
-
-/**
- * Safely writes profiles to LocalStorage
- */
-function setStoredProfiles(profiles: ConnectionProfile[]): boolean {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
-        return true;
-    } catch (error) {
-        if (error instanceof Error && error.name === 'QuotaExceededError') {
-            console.error('LocalStorage quota exceeded. Cannot save profile.');
-        } else {
-            console.error('Failed to save profiles to LocalStorage:', error);
-        }
-        return false;
-    }
+    isNew: boolean;
 }
 
 /**
  * Parses a PostgreSQL connection URL and extracts connection fields
- * Password is intentionally excluded for security
- * 
- * Handles:
- * - URL-encoded special characters in username/password
- * - IPv6 addresses in brackets [::1]
- * - Query parameters (stripped from database name)
- * - Both postgres:// and postgresql:// schemes
- * 
- * @param connectionUrl - Full PostgreSQL connection URL
- * @returns Parsed connection fields without password, or null if parsing fails
  */
-function parseConnectionUrl(connectionUrl: string): Omit<ConnectionProfile, 'id' | 'name' | 'createdAt' | 'lastUsed'> | null {
+function parseConnectionUrl(connectionUrl: string): { host: string; port: string; username: string; database: string; password?: string } | null {
     try {
-        // Use URL API for robust parsing
-        // Replace postgres:// with http:// temporarily for URL parsing
         const urlToParse = connectionUrl.replace(/^postgres(ql)?:\/\//, 'http://');
         const url = new URL(urlToParse);
 
-        // Extract and decode username (URL API handles decoding automatically)
         const username = url.username;
-        if (!username) {
-            console.error('Username is required in connection URL');
-            return null;
-        }
+        if (!username) return null;
 
-        // Extract host (handles both regular hostnames and IPv6 in brackets)
         let host = url.hostname;
-        if (!host) {
-            console.error('Host is required in connection URL');
-            return null;
-        }
+        if (!host) return null;
 
-        // Extract port (default to 5432 if not specified)
         const port = url.port || '5432';
+        const password = url.password || undefined;
 
-        // Extract database name (pathname starts with /, remove it and any query params)
-        const pathname = url.pathname.substring(1); // Remove leading /
-        const database = pathname.split('?')[0]; // Remove query parameters if present
+        const pathname = url.pathname.substring(1);
+        const database = pathname.split('?')[0];
 
-        if (!database) {
-            console.error('Database name is required in connection URL');
-            return null;
-        }
+        if (!database) return null;
 
-        return {
-            host,
-            port,
-            username,
-            database,
-        };
-    } catch (error) {
-        console.error('Error parsing connection URL:', error);
-
-        // Fallback to regex for edge cases where URL API fails
+        return { host, port, username, database, password };
+    } catch {
+        // Fallback to regex
         try {
-            // Enhanced regex that handles more cases
-            // postgres://username[:password]@host:port/database
-            // Password is optional to handle URLs without passwords
-            // Supports IPv6: postgres://user:pass@[::1]:5432/db
             const match = connectionUrl.match(
                 /^postgres(?:ql)?:\/\/([^:@]+)(?::([^@]*))?@(\[[\da-fA-F:]+\]|[^:\/]+)(?::(\d+))?\/([^?]+)/
             );
+            if (!match) return null;
 
-            if (!match) {
-                console.error('Failed to parse connection URL with fallback regex');
-                return null;
-            }
-
-            const [, encodedUsername, /* password (optional) */, host, port = '5432', database] = match;
-
-            // Decode URL-encoded username
+            const [, encodedUsername, password, host, port = '5432', database] = match;
             const username = decodeURIComponent(encodedUsername);
-
-            // Remove brackets from IPv6 addresses if present
-            const cleanHost = host.startsWith('[') && host.endsWith(']')
-                ? host.slice(1, -1)
-                : host;
+            const cleanHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 
             return {
                 host: cleanHost,
                 port,
                 username,
                 database,
+                password: password ? decodeURIComponent(password) : undefined,
             };
-        } catch (fallbackError) {
-            console.error('Fallback parsing also failed:', fallbackError);
+        } catch {
             return null;
         }
     }
 }
 
-/**
- * Generates a user-friendly profile name from connection fields
- * Format: {username}@{host}/{database}
- */
 function generateProfileName(username: string, host: string, database: string): string {
     return `${username}@${host}/${database}`;
 }
 
-/**
- * Checks if two profiles have the same connection details (excluding password)
- */
-function isSameConnection(profile: ConnectionProfile, fields: { host: string; port: string; username: string; database: string }): boolean {
-    return (
-        profile.host === fields.host &&
-        profile.port === fields.port &&
-        profile.username === fields.username &&
-        profile.database === fields.database
-    );
-}
-
-/**
- * Saves a new connection profile after successful connection test
- * 
- * SECURITY: Only non-sensitive connection metadata is stored.
- * Password is NEVER stored in LocalStorage. Users must re-enter
- * passwords when using saved profiles.
- * 
- * @param connectionUrl - Full PostgreSQL connection URL (password will be excluded from storage)
- * @param name - Optional custom name (auto-generated if not provided)
- * @returns SaveProfileResult with profile and isNew flag, or null if save failed
- */
-export function saveProfile(connectionUrl: string, name?: string): SaveProfileResult | null {
+export async function saveProfile(connectionUrl: string, token: string, name?: string): Promise<SaveProfileResult | null> {
     try {
         const parsedFields = parseConnectionUrl(connectionUrl);
+        if (!parsedFields) return null;
 
-        if (!parsedFields) {
-            console.error('Cannot save profile: invalid connection URL');
-            return null;
-        }
-
-        const profiles = getStoredProfiles();
-
-        // Check if a profile with the same connection details already exists
-        const existingProfile = profiles.find(p => isSameConnection(p, parsedFields));
+        const profiles = await getProfiles(token);
+        
+        // Check if existing profile matches
+        const existingProfile = profiles.find(p => 
+            p.host === parsedFields.host && 
+            p.port === parsedFields.port && 
+            p.username === parsedFields.username && 
+            p.database === parsedFields.database
+        );
 
         if (existingProfile) {
-            // Update the lastUsed timestamp instead of creating a duplicate
             existingProfile.lastUsed = new Date().toISOString();
-
-            // Update the profile name if a custom name was provided
             if (name && name !== existingProfile.name) {
                 existingProfile.name = name;
             }
-
-            const success = setStoredProfiles(profiles);
-            return success ? { profile: existingProfile, isNew: false } : null;
+            
+            const updated = await apiClient.updateProfile(existingProfile.id, {
+                password: parsedFields.password,
+                lastUsed: existingProfile.lastUsed,
+                name: existingProfile.name
+            }, token);
+            
+            return { profile: updated, isNew: false };
         }
 
-        // Create new profile if it doesn't exist
-        const newProfile: ConnectionProfile = {
-            id: generateUUID(),
+        const newProfileData = {
             name: name || generateProfileName(parsedFields.username, parsedFields.host, parsedFields.database),
             host: parsedFields.host,
             port: parsedFields.port,
             username: parsedFields.username,
             database: parsedFields.database,
-            createdAt: new Date().toISOString(),
+            password: parsedFields.password || ""
         };
 
-        profiles.push(newProfile);
-
-        const success = setStoredProfiles(profiles);
-        return success ? { profile: newProfile, isNew: true } : null;
+        const newProfile = await apiClient.createProfile(newProfileData, token);
+        return { profile: newProfile, isNew: true };
     } catch (error) {
         console.error('Failed to save profile:', error);
         return null;
     }
 }
 
-/**
- * Retrieves all saved connection profiles
- * 
- * @returns Array of profiles (empty if none exist or data is corrupted)
- */
-export function getProfiles(): ConnectionProfile[] {
-    return getStoredProfiles();
-}
+const STORAGE_KEY = 'sequel-speak-profiles';
 
-/**
- * Retrieves a specific profile by ID
- * 
- * @param id - Profile UUID
- * @returns The profile if found, null otherwise
- */
-export function getProfileById(id: string): ConnectionProfile | null {
-    const profiles = getStoredProfiles();
-    return profiles.find(profile => profile.id === id) || null;
-}
-
-/**
- * Deletes a profile by ID
- * 
- * @param id - Profile UUID to delete
- * @returns true if deleted, false if not found or delete failed
- */
-export function deleteProfile(id: string): boolean {
+export async function getProfiles(token: string): Promise<ConnectionProfile[]> {
     try {
-        const profiles = getStoredProfiles();
-        const filteredProfiles = profiles.filter(profile => profile.id !== id);
-
-        if (filteredProfiles.length === profiles.length) {
-            // Profile not found
-            return false;
+        // Migration path for existing locally-stored profiles
+        const localData = localStorage.getItem(STORAGE_KEY);
+        if (localData) {
+            try {
+                const parsed = JSON.parse(localData);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    console.log(`Migrating ${parsed.length} profiles from LocalStorage to backend...`);
+                    // Migrate in parallel
+                    await Promise.all(parsed.map(async (p: any) => {
+                        try {
+                            await apiClient.createProfile({
+                                name: p.name,
+                                host: p.host,
+                                port: p.port,
+                                username: p.username,
+                                database: p.database,
+                                password: "", // Need user to re-enter
+                            }, token);
+                        } catch (err) {
+                            console.error(`Failed to migrate profile ${p.name}`, err);
+                        }
+                    }));
+                }
+            } catch (err) {
+                console.error('Migration parsing failed', err);
+            }
+            // Clear to avoid infinite migration loops
+            localStorage.removeItem(STORAGE_KEY);
         }
 
-        return setStoredProfiles(filteredProfiles);
+        return await apiClient.getProfiles(token);
+    } catch (error) {
+        console.error('Failed to get profiles:', error);
+        return [];
+    }
+}
+
+export async function getProfileById(id: string, token: string): Promise<ConnectionProfile | null> {
+    try {
+        const profiles = await getProfiles(token);
+        return profiles.find(p => p.id === id) || null;
+    } catch {
+        return null;
+    }
+}
+
+export async function deleteProfile(id: string, token: string): Promise<boolean> {
+    try {
+        await apiClient.deleteProfile(id, token);
+        return true;
     } catch (error) {
         console.error('Failed to delete profile:', error);
         return false;
     }
 }
 
-/**
- * Updates the lastUsed timestamp for a profile
- * 
- * @param id - Profile UUID
- * @returns true if updated, false if not found or update failed
- */
-export function updateLastUsed(id: string): boolean {
+export async function updateLastUsed(id: string, token: string): Promise<boolean> {
     try {
-        const profiles = getStoredProfiles();
-        const profile = profiles.find(p => p.id === id);
-
-        if (!profile) {
-            return false;
-        }
-
-        profile.lastUsed = new Date().toISOString();
-
-        return setStoredProfiles(profiles);
-    } catch (error) {
-        console.error('Failed to update lastUsed:', error);
+        await apiClient.updateProfile(id, { lastUsed: new Date().toISOString() }, token);
+        return true;
+    } catch {
         return false;
     }
 }
 
-/**
- * Updates the name of a profile
- * 
- * @param id - Profile UUID
- * @param newName - New name for the profile
- * @returns true if updated, false if not found, invalid name, or update failed
- */
-export function updateProfileName(id: string, newName: string): boolean {
+export async function updateProfileName(id: string, newName: string, token: string): Promise<boolean> {
     try {
-        // Validate new name
-        if (!newName || typeof newName !== 'string' || newName.trim().length === 0) {
-            console.warn('Invalid profile name provided');
-            return false;
-        }
-
-        const profiles = getStoredProfiles();
-        const trimmedName = newName.trim();
-
-        // Prevent duplicate profile names (case-insensitive) across different profiles
-        const isDuplicate = profiles.some(
-            p => p.id !== id && p.name.trim().toLowerCase() === trimmedName.toLowerCase()
-        );
-
-        if (isDuplicate) {
-            console.warn('Duplicate profile name provided');
-            return false;
-        }
-
-        const profile = profiles.find(p => p.id === id);
-
-        if (!profile) {
-            return false;
-        }
-
-        profile.name = trimmedName;
-
-        return setStoredProfiles(profiles);
-    } catch (error) {
-        console.error('Failed to update profile name:', error);
+        await apiClient.updateProfile(id, { name: newName.trim() }, token);
+        return true;
+    } catch {
         return false;
     }
 }

@@ -3,6 +3,6 @@
  */
 
 export {
-    localStorageProfileAdapter,
+    apiProfileAdapter,
     type ProfileAdapter,
-} from './localStorageProfileAdapter';
+} from './apiProfileAdapter';
