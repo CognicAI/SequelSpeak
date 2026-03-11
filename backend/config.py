@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE) if os.getenv("ENVIRONMENT", "development") != "production" else None,
         env_file_encoding='utf-8',
-        extra='forbid'
+        extra='ignore'
     )
     
     @field_validator('environment')

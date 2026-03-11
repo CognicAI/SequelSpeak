@@ -442,7 +442,8 @@ class TestAPIEndpointSecurity:
             headers=auth_headers
         )
         
-        assert response.status_code == 422
+        # Should get 400 for validation error (mapped by custom handler)
+        assert response.status_code == 400
         
         data = response.json()
         assert "detail" in data
