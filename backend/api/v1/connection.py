@@ -139,7 +139,11 @@ async def test_connection(
         # Construct url
         username = quote_plus(profile_data.username)
         password_quoted = quote_plus(password)
-        connection_url = f"postgresql://{username}:{password_quoted}@{profile_data.host}:{profile_data.port}/{profile_data.database}"
+        host_for_url = profile_data.host
+        # If host is an IPv6 literal without brackets, wrap it so the URL is valid.
+        if host_for_url and ":" in host_for_url and not host_for_url.startswith("["):
+            host_for_url = f"[{host_for_url}]"
+        connection_url = f"postgresql://{username}:{password_quoted}@{host_for_url}:{profile_data.port}/{profile_data.database}"
 
     if not connection_url:
         raise DatabaseConnectionError(
