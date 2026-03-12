@@ -241,7 +241,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
         }
 
         return success;
-    }, [activeProfileId, loadProfiles, onProfileClear, onProfileDelete]);
+    }, [activeProfileId, loadProfiles, onProfileClear, onProfileDelete, getToken]);
 
     /**
      * Rename a profile.
@@ -272,7 +272,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
         }
 
         return success;
-    }, [loadProfiles, onProfileRename]);
+    }, [loadProfiles, onProfileRename, getToken]);
 
     return {
         // State
