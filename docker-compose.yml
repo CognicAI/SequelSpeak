@@ -56,9 +56,9 @@ services:
       dockerfile: Dockerfile
       args:
         # Backend API URL (accessible from browser)
-        VITE_API_URL: ${VITE_API_URL}
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
         # Clerk Publishable Key (needed at build time for frontend)
-        VITE_CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY}
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
     container_name: sequelspeak-frontend
     env_file:
       - .env.docker

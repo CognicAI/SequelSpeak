@@ -39,13 +39,20 @@ describe('useProfileSelection', () => {
         localStorage.clear();
     });
 
-    it('initialises with empty profiles when adapter returns []', () => {
+    it('initialises with empty profiles when adapter returns []', async () => {
         const adapter = makeMockAdapter([]);
         const { result } = renderHook(() => useProfileSelection({ adapter }));
 
         expect(result.current.profiles).toEqual([]);
         expect(result.current.activeProfileId).toBeNull();
+        expect(result.current.isLoading).toBe(true);
+
+        await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        });
+
         expect(result.current.isLoading).toBe(false);
+        expect(result.current.profiles).toEqual([]);
     });
 
     it('loads profiles from the adapter on mount', async () => {
