@@ -1,7 +1,7 @@
 import logging
 import hashlib
 from typing import List, Optional
-from sqlmodel import Session, select, SQLModel
+from sqlmodel import Session, select
 from datetime import datetime
 import uuid
 
@@ -18,14 +18,8 @@ class ProfileService:
         pass
 
     async def initialize(self) -> None:
-        """
-        Initialize the database tables if they don't exist.
-        """
-        try:
-            SQLModel.metadata.create_all(engine)
-            logger.info("PostgreSQL tables initialized (if they didn't exist)")
-        except Exception as e:
-            logger.error(f"Failed to initialize PostgreSQL tables: {e}")
+        """No-op: database migrations are handled by Alembic at application startup."""
+        pass
 
     async def close(self) -> None:
         """Database engine is managed globally, no specific close needed per service."""

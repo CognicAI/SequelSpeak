@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI):
     # Initialize router service
     initialize_router_service(conversation_state_manager)
     logger.info("✓ Router service initialized")
-    
+
     # Initialize profile service
     await profile_service.initialize()
     logger.info("✓ Profile service initialized")
