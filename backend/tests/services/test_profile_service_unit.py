@@ -26,9 +26,8 @@ class TestProfileServiceUnit:
 
     @pytest.mark.asyncio
     async def test_initialize(self, profile_service, mock_engine):
-        with patch("services.profile_service.SQLModel.metadata.create_all") as mock_create:
-            await profile_service.initialize()
-            mock_create.assert_called_once_with(mock_engine)
+        # initialize() is a no-op since Alembic handles schema management
+        await profile_service.initialize()  # should complete without error
 
     @pytest.mark.asyncio
     async def test_get_profiles(self, profile_service, mock_session):
