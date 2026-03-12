@@ -7,6 +7,7 @@ from datetime import datetime
 from models.profile import Profile
 from schemas.profile import ProfileCreate, ProfileUpdate, ProfileResponse
 from utils.db import async_engine
+from services.credential_cache import credential_cache
 
 logger = logging.getLogger(__name__)
 
@@ -75,18 +76,23 @@ class ProfileService:
             await session.commit()
             await session.refresh(db_profile)
 
-            return ProfileResponse(
-                id=db_profile.id,
-                name=db_profile.name,
-                host=db_profile.host,
-                port=db_profile.port,
-                username=db_profile.username,
-                database=db_profile.database,
-                createdAt=db_profile.created_at.isoformat().replace('+00:00', 'Z'),
-                lastUsed=None
-            )
+        if profile_in.password:
+            await credential_cache.store_password(user_id, db_profile.id, profile_in.password)
+
+        return ProfileResponse(
+            id=db_profile.id,
+            name=db_profile.name,
+            host=db_profile.host,
+            port=db_profile.port,
+            username=db_profile.username,
+            database=db_profile.database,
+            createdAt=db_profile.created_at.isoformat().replace('+00:00', 'Z'),
+            lastUsed=None
+        )
 
     async def update_profile(self, user_id: str, profile_id: str, profile_in: ProfileUpdate) -> Optional[ProfileResponse]:
+        # Extract password before building update_data so we can cache it later
+        new_password = profile_in.password
         async with AsyncSession(async_engine) as session:
             statement = select(Profile).where(
                 Profile.user_id == user_id,
@@ -120,16 +126,19 @@ class ProfileService:
             await session.commit()
             await session.refresh(db_profile)
 
-            return ProfileResponse(
-                id=db_profile.id,
-                name=db_profile.name,
-                host=db_profile.host,
-                port=db_profile.port,
-                username=db_profile.username,
-                database=db_profile.database,
-                createdAt=db_profile.created_at.isoformat().replace('+00:00', 'Z'),
-                lastUsed=db_profile.last_used.isoformat().replace('+00:00', 'Z') if db_profile.last_used else None
-            )
+        if new_password:
+            await credential_cache.store_password(user_id, profile_id, new_password)
+
+        return ProfileResponse(
+            id=db_profile.id,
+            name=db_profile.name,
+            host=db_profile.host,
+            port=db_profile.port,
+            username=db_profile.username,
+            database=db_profile.database,
+            createdAt=db_profile.created_at.isoformat().replace('+00:00', 'Z'),
+            lastUsed=db_profile.last_used.isoformat().replace('+00:00', 'Z') if db_profile.last_used else None
+        )
 
     async def delete_profile(self, user_id: str, profile_id: str) -> bool:
         async with AsyncSession(async_engine) as session:

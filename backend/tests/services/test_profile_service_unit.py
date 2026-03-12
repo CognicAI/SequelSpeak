@@ -90,7 +90,9 @@ class TestProfileServiceUnit:
             password="password123"
         )
 
-        with patch("services.profile_service.AsyncSession", return_value=mock_session):
+        with patch("services.profile_service.AsyncSession", return_value=mock_session), \
+             patch("services.profile_service.credential_cache") as mock_cache:
+            mock_cache.store_password = AsyncMock()
             response = await profile_service.create_profile(user_id, profile_in)
 
             assert response.name == "New DB"
@@ -121,7 +123,9 @@ class TestProfileServiceUnit:
         mock_exec_result.first.return_value = mock_profile
         mock_session.exec.return_value = mock_exec_result
 
-        with patch("services.profile_service.AsyncSession", return_value=mock_session):
+        with patch("services.profile_service.AsyncSession", return_value=mock_session), \
+             patch("services.profile_service.credential_cache") as mock_cache:
+            mock_cache.store_password = AsyncMock()
             response = await profile_service.update_profile(user_id, profile_id, profile_in)
 
             assert response is not None
@@ -138,6 +142,79 @@ class TestProfileServiceUnit:
         with patch("services.profile_service.AsyncSession", return_value=mock_session):
             response = await profile_service.update_profile("user", "id", ProfileUpdate(name="New"))
             assert response is None
+
+    @pytest.mark.asyncio
+    async def test_create_profile_caches_password(self, profile_service: ProfileService, mock_session: AsyncMock) -> None:
+        user_id = "test-user"
+        profile_in = ProfileCreate(
+            name="New DB",
+            host="remote-host",
+            port="5432",
+            username="admin",
+            database="prod",
+            password="secret123"
+        )
+
+        with patch("services.profile_service.AsyncSession", return_value=mock_session), \
+             patch("services.profile_service.credential_cache") as mock_cache:
+            mock_cache.store_password = AsyncMock()
+            response = await profile_service.create_profile(user_id, profile_in)
+
+            mock_cache.store_password.assert_awaited_once_with(user_id, response.id, "secret123")
+
+    @pytest.mark.asyncio
+    async def test_update_profile_caches_password(self, profile_service: ProfileService, mock_session: AsyncMock) -> None:
+        user_id = "test-user"
+        profile_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        mock_profile = Profile(
+            id=profile_id,
+            user_id=user_id,
+            name="DB",
+            host="localhost",
+            port="5432",
+            username="user",
+            database="db",
+            created_at=now
+        )
+
+        mock_exec_result = MagicMock()
+        mock_exec_result.first.return_value = mock_profile
+        mock_session.exec.return_value = mock_exec_result
+
+        with patch("services.profile_service.AsyncSession", return_value=mock_session), \
+             patch("services.profile_service.credential_cache") as mock_cache:
+            mock_cache.store_password = AsyncMock()
+            await profile_service.update_profile(user_id, profile_id, ProfileUpdate(password="new-secret"))
+
+            mock_cache.store_password.assert_awaited_once_with(user_id, profile_id, "new-secret")
+
+    @pytest.mark.asyncio
+    async def test_update_profile_skips_cache_when_no_password(self, profile_service: ProfileService, mock_session: AsyncMock) -> None:
+        user_id = "test-user"
+        profile_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        mock_profile = Profile(
+            id=profile_id,
+            user_id=user_id,
+            name="DB",
+            host="localhost",
+            port="5432",
+            username="user",
+            database="db",
+            created_at=now
+        )
+
+        mock_exec_result = MagicMock()
+        mock_exec_result.first.return_value = mock_profile
+        mock_session.exec.return_value = mock_exec_result
+
+        with patch("services.profile_service.AsyncSession", return_value=mock_session), \
+             patch("services.profile_service.credential_cache") as mock_cache:
+            mock_cache.store_password = AsyncMock()
+            await profile_service.update_profile(user_id, profile_id, ProfileUpdate(name="Renamed"))
+
+            mock_cache.store_password.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_delete_profile_success(self, profile_service: ProfileService, mock_session: AsyncMock) -> None:
