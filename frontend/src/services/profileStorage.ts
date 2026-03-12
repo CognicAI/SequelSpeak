@@ -122,8 +122,8 @@ export async function getProfiles(token: string): Promise<ConnectionProfile[]> {
                 const parsed = JSON.parse(localData);
                 if (Array.isArray(parsed) && parsed.length > 0) {
                     console.log(`Migrating ${parsed.length} profiles from LocalStorage to backend...`);
-                    // Migrate in parallel
-                    await Promise.all(parsed.map(async (p: any) => {
+                    // Migrate in parallel, tracking per-profile success/failure
+                    const results = await Promise.all(parsed.map(async (p: any) => {
                         try {
                             await apiClient.createProfile({
                                 name: p.name,
@@ -133,16 +133,30 @@ export async function getProfiles(token: string): Promise<ConnectionProfile[]> {
                                 database: p.database,
                                 password: "", // Need user to re-enter
                             }, token);
+                            return { success: true as const, profile: p };
                         } catch (err) {
                             console.error(`Failed to migrate profile ${p.name}`, err);
+                            return { success: false as const, profile: p };
                         }
                     }));
+
+                    const failed = results.filter(r => !r.success).map(r => r.profile);
+                    if (failed.length === 0) {
+                        // All profiles migrated — safe to clear
+                        localStorage.removeItem(STORAGE_KEY);
+                    } else {
+                        // Retain only profiles that failed so they can be retried next time
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(failed));
+                        console.warn(`${failed.length} profile(s) could not be migrated and were kept in LocalStorage for retry.`);
+                    }
+                } else {
+                    // Empty or malformed array — nothing to migrate, safe to clear
+                    localStorage.removeItem(STORAGE_KEY);
                 }
             } catch (err) {
+                // Parsing failed — do NOT clear; data may still be salvageable
                 console.error('Migration parsing failed', err);
             }
-            // Clear to avoid infinite migration loops
-            localStorage.removeItem(STORAGE_KEY);
         }
 
         return await apiClient.getProfiles(token);
