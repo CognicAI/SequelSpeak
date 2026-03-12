@@ -9,7 +9,7 @@
  */
 
 import type { TestConnectionSuccessResponse } from '../../types/api';
-import type { ConnectionProfile } from '../../types/profile';
+import type { ConnectionProfile, ProfileCreateRequest, ProfileUpdateRequest } from '../../types/profile';
 import { ApiError } from './errors';
 
 class ApiClient {
@@ -117,7 +117,7 @@ class ApiClient {
         });
     }
 
-    async createProfile(profileData: any, token: string): Promise<ConnectionProfile> {
+    async createProfile(profileData: ProfileCreateRequest, token: string): Promise<ConnectionProfile> {
         return this.request<ConnectionProfile>('/api/v1/profiles', {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
@@ -125,7 +125,7 @@ class ApiClient {
         });
     }
 
-    async updateProfile(profileId: string, profileData: any, token: string): Promise<ConnectionProfile> {
+    async updateProfile(profileId: string, profileData: ProfileUpdateRequest, token: string): Promise<ConnectionProfile> {
         return this.request<ConnectionProfile>(`/api/v1/profiles/${profileId}`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}` },
