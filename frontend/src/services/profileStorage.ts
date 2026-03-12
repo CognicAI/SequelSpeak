@@ -23,7 +23,7 @@ function parseConnectionUrl(connectionUrl: string): { host: string; port: string
         const username = url.username;
         if (!username) return null;
 
-        let host = url.hostname;
+        const host = url.hostname;
         if (!host) return null;
 
         const port = url.port || '5432';
@@ -39,7 +39,7 @@ function parseConnectionUrl(connectionUrl: string): { host: string; port: string
         // Fallback to regex
         try {
             const match = connectionUrl.match(
-                /^postgres(?:ql)?:\/\/([^:@]+)(?::([^@]*))?@(\[[\da-fA-F:]+\]|[^:\/]+)(?::(\d+))?\/([^?]+)/
+                /^postgres(?:ql)?:\/\/([^:@]+)(?::([^@]*))?@(\[[\da-fA-F:]+\]|[^:/]+)(?::(\d+))?\/([^?]+)/
             );
             if (!match) return null;
 
@@ -86,7 +86,6 @@ export async function saveProfile(connectionUrl: string, token: string, name?: s
             }
             
             const updated = await apiClient.updateProfile(existingProfile.id, {
-                password: parsedFields.password,
                 lastUsed: existingProfile.lastUsed,
                 name: existingProfile.name
             }, token);
@@ -121,9 +120,9 @@ export async function getProfiles(token: string): Promise<ConnectionProfile[]> {
             try {
                 const parsed = JSON.parse(localData);
                 if (Array.isArray(parsed) && parsed.length > 0) {
-                    console.log(`Migrating ${parsed.length} profiles from LocalStorage to backend...`);
+                    console.warn(`Migrating ${parsed.length} profiles from LocalStorage to backend...`);
                     // Migrate in parallel, tracking per-profile success/failure
-                    const results = await Promise.all(parsed.map(async (p: any) => {
+                    const results = await Promise.all(parsed.map(async (p: { name: string; host: string; port: string; username: string; database: string }) => {
                         try {
                             await apiClient.createProfile({
                                 name: p.name,
