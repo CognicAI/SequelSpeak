@@ -194,7 +194,7 @@ class TestRequestStatePropagation:
         and the endpoint assigns it to request.state without raising.
         """
         payload = {"query": "Show me revenue for last month"}
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
 
         assert response.status_code == 200
         data = response.json()
@@ -209,7 +209,7 @@ class TestRequestStatePropagation:
         from services.conversation_state import conversation_state_manager
 
         payload = {"query": "How many users signed up last week?"}
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
 
         assert response.status_code == 200
         conv_id = response.json()["conversation_id"]
@@ -230,7 +230,7 @@ class TestRequestStatePropagation:
             "query": "Follow-up question",
             "conversation_id": existing_id
         }
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
 
         assert response.status_code == 200
         assert response.json()["conversation_id"] == existing_id

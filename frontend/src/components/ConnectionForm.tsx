@@ -17,7 +17,12 @@ import { PasswordPromptModal } from './PasswordPromptModal';
 
 type ConnectionMode = 'url' | 'fields';
 
-export function ConnectionForm() {
+interface ConnectionFormProps {
+    /** Notifies parent when a profile has an active authenticated connection. */
+    onConnectionSuccess?: (profileId: string, expiresAtMs: number) => void;
+}
+
+export function ConnectionForm({ onConnectionSuccess }: ConnectionFormProps = {}) {
     const { getToken } = useAuth();  // Get Clerk authentication hook
     const [mode, setMode] = useState<ConnectionMode>('url');
     const [url, setUrl] = useState('');
@@ -223,11 +228,19 @@ export function ConnectionForm() {
                 // Use the isNew flag to determine if this was a new profile or an update
                 const action = result.isNew ? 'saved' : 'updated';
 
+                // Redis credential cache TTL is currently 1 hour.
+                const expiresAtMs = Date.now() + (60 * 60 * 1000);
+                onConnectionSuccess?.(result.profile.id, expiresAtMs);
+
                 setStatusMessage({
                     type: 'success',
                     text: `${data.message} Profile "${result.profile.name}" ${action} successfully.`
                 });
             } else {
+                if (activeProfileId) {
+                    const expiresAtMs = Date.now() + (60 * 60 * 1000);
+                    onConnectionSuccess?.(activeProfileId, expiresAtMs);
+                }
                 // Connection succeeded but profile save failed (e.g., quota exceeded)
                 setStatusMessage({
                     type: 'success',
@@ -301,6 +314,9 @@ export function ConnectionForm() {
                 type: 'success',
                 text: `${data.message} Credentials cached for this session.`
             });
+
+            const expiresAtMs = Date.now() + (60 * 60 * 1000);
+            onConnectionSuccess?.(activeProfileId, expiresAtMs);
             
             // Update the connection status
             setConnectionStatus('connected');

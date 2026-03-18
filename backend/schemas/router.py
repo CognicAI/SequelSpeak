@@ -110,6 +110,17 @@ class RouterRequest(BaseModel):
             "example": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
         }
     )
+
+    database_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "UUID of the saved connection profile to query against. "
+            "Stored in conversation metadata for use by the orchestrator."
+        ),
+        json_schema_extra={
+            "example": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+        }
+    )
     
     user_context: UserContext | None = Field(
         default=None,
@@ -322,3 +333,105 @@ class RouterErrorResponse(BaseModel):
 
 # Schema version for API versioning
 ROUTER_SCHEMA_VERSION = "1.0.0"
+
+
+class QueryStatusResponse(BaseModel):
+    """
+    Response from GET /api/v1/query/status/{conversation_id}.
+
+    Returns the current snapshot of a running conversation so the
+    frontend can update its chat UI without server-sent events.
+    """
+
+    conversation_id: str = Field(..., description="UUID v4 conversation identifier")
+    status: str = Field(..., description="ConversationStatus value (processing, clarification_needed, complete, error, timeout, cancelled)")
+    current_stage: str = Field(..., description="Current ExecutionStage value")
+    awaiting_user_response: bool = Field(default=False, description="True if execution is paused for clarification")
+    pending_clarification_questions: list[str] = Field(
+        default_factory=list,
+        description="Questions awaiting user answer"
+    )
+    generated_sql: Optional[str] = Field(default=None, description="SQL produced by SQLWriter, if available")
+    execution_result: Optional[Any] = Field(default=None, description="Query result rows/metadata from Executor")
+    explanation: Optional[str] = Field(default=None, description="Plain-English explanation from Explainer")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+                "status": "clarification_needed",
+                "current_stage": "clarification",
+                "awaiting_user_response": True,
+                "pending_clarification_questions": ["What time period are you interested in?"],
+                "generated_sql": None,
+                "execution_result": None,
+                "explanation": None,
+            }
+        }
+    )
+
+
+class QueryRespondRequest(BaseModel):
+    """
+    Body for POST /api/v1/query/respond.
+
+    Submits user answers to pending clarification questions.
+    The same conversation_id is preserved so the backend can resume execution
+    from where it paused.
+    """
+
+    conversation_id: str = Field(..., description="UUID v4 of the conversation to resume")
+    answers: list[str] = Field(
+        default_factory=list,
+        description="Answer strings, one per pending clarification question"
+    )
+    message: Optional[str] = Field(
+        default=None,
+        description="Optional free-form follow-up message (used instead of answers for open-ended turns)"
+    )
+    database_id: Optional[str] = Field(
+        default=None,
+        description="Override database profile if the user switched connection mid-conversation"
+    )
+
+    @field_validator('conversation_id')
+    @classmethod
+    def validate_respond_conversation_id(cls, v: str) -> str:
+        """Validate UUID v4 format on respond request."""
+        if not UUID_V4_PATTERN.match(v.strip()):
+            raise ValueError(
+                "conversation_id must be a valid UUID v4 format"
+            )
+        return v.strip().lower()
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+                "answers": ["Last 30 days"],
+                "message": None,
+                "database_id": None,
+            }
+        }
+    )
+
+
+class QueryRespondResponse(BaseModel):
+    """Response from POST /api/v1/query/respond."""
+
+    conversation_id: str = Field(..., description="Same UUID v4 as the request")
+    status: str = Field(..., description="Updated ConversationStatus after applying answers")
+    current_stage: str = Field(..., description="Updated ExecutionStage")
+    message: str = Field(default="Clarification answers recorded", description="Human-readable confirmation")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+                "status": "processing",
+                "current_stage": "planning",
+                "message": "Clarification answers recorded",
+            }
+        }
+    )
+

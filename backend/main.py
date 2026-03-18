@@ -19,6 +19,7 @@ from typing import Callable, Awaitable, Any
 from services.connection_pool import pool_manager
 from services.conversation_state import conversation_state_manager
 from services.router_service import initialize_router_service
+from services.orchestrator import initialize_orchestrator_service
 from services.profile_service import profile_service
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -86,6 +87,10 @@ async def lifespan(app: FastAPI):
     # Initialize router service
     initialize_router_service(conversation_state_manager)
     logger.info("✓ Router service initialized")
+
+    # Initialize orchestrator service
+    initialize_orchestrator_service(conversation_state_manager)
+    logger.info("✓ Orchestrator service initialized")
 
     # Initialize profile service
     await profile_service.initialize()
@@ -447,7 +452,7 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
 app.include_router(connection.router, prefix="/api/v1/utils", tags=["Connection"])
 app.include_router(health.router, prefix="/api/v1", tags=["Health"])
 app.include_router(meta.router, prefix="/api/v1", tags=["Meta"])
-app.include_router(query.router, prefix="/api/v1", tags=["Query"])
+app.include_router(query.router, prefix="/api/v1/query", tags=["Query"])
 app.include_router(profiles.router, prefix="/api/v1", tags=["Profiles"])
 
 @app.get("/")

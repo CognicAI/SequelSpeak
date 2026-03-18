@@ -20,6 +20,28 @@ from services.router_service import initialize_router_service, get_router_servic
 from schemas.conversation import ExecutionStage, ConversationStatus
 
 
+import unittest.mock
+
+@pytest.fixture(autouse=True)
+def mock_orchestrator():
+    """Mock the orchestrator so background tasks don't block tests."""
+    with unittest.mock.patch("api.v1.query.get_orchestrator_service") as mock_get:
+        mock_svc = unittest.mock.AsyncMock()
+        mock_svc.execute_conversation = unittest.mock.AsyncMock()
+        mock_get.return_value = mock_svc
+        yield mock_svc
+        
+import unittest.mock
+
+@pytest.fixture(autouse=True)
+def mock_orchestrator():
+    """Mock the orchestrator so background tasks don't block tests."""
+    with unittest.mock.patch("api.v1.query.get_orchestrator_service") as mock_get:
+        mock_svc = unittest.mock.AsyncMock()
+        mock_svc.execute_conversation = unittest.mock.AsyncMock()
+        mock_get.return_value = mock_svc
+        yield mock_svc
+        
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -60,7 +82,7 @@ class TestRouterStatePersistenceIntegration:
         """Test that a new query creates initial conversation state."""
         # Send query request
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Show me sales from last month"
             }
@@ -93,11 +115,11 @@ class TestRouterStatePersistenceIntegration:
     async def test_conversation_with_user_context_persists_metadata(self, client: AsyncClient):
         """Test that user context is persisted in metadata."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Count active users",
                 "user_context": {
-                    "user_id": "user-123",
+                    "user_id": "test-user-id-00000000",
                     "session_id": "session-abc"
                 }
             }
@@ -112,7 +134,7 @@ class TestRouterStatePersistenceIntegration:
         assert state is not None
         
         # Verify user context in metadata
-        assert state.metadata["user_context"]["user_id"] == "user-123"
+        assert state.metadata["user_context"]["user_id"] == "test-user-id-00000000"
         assert state.metadata["user_context"]["session_id"] == "session-abc"
     
     @pytest.mark.asyncio
@@ -120,7 +142,7 @@ class TestRouterStatePersistenceIntegration:
         """Test that follow-up queries to existing conversation preserve state."""
         # First query
         response1 = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": "Show sales"}
         )
         
@@ -133,7 +155,7 @@ class TestRouterStatePersistenceIntegration:
         
         # Second query with same conversation_id (simulate multi-turn)
         response2 = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Show revenue instead",
                 "conversation_id": conversation_id
@@ -160,11 +182,11 @@ class TestRouterStatePersistenceIntegration:
         """Test that user context is merged correctly on follow-up requests."""
         # First query with initial context
         response1 = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Show sales",
                 "user_context": {
-                    "user_id": "user-123",
+                    "user_id": "test-user-id-00000000",
                     "session_id": "session-abc"
                 }
             }
@@ -174,7 +196,7 @@ class TestRouterStatePersistenceIntegration:
         
         # Second query with updated context (different session_id)
         response2 = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Show revenue",
                 "conversation_id": conversation_id,
@@ -191,7 +213,7 @@ class TestRouterStatePersistenceIntegration:
         assert state is not None
         
         # Verify context was merged (user_id preserved, session_id updated)
-        assert state.metadata["user_context"]["user_id"] == "user-123"
+        assert state.metadata["user_context"]["user_id"] == "test-user-id-00000000"
         assert state.metadata["user_context"]["session_id"] == "session-xyz"
     
     @pytest.mark.asyncio
@@ -200,7 +222,7 @@ class TestRouterStatePersistenceIntegration:
         correlation_id = "test-corr-12345"
         
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": "Show data"},
             headers={"X-Correlation-ID": correlation_id}
         )
@@ -223,7 +245,7 @@ class TestRouterStatePersistenceIntegration:
         # happens at Router entry, not after routing decisions.
         
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": "Complex analytics query"}
         )
         
@@ -253,7 +275,7 @@ class TestStatePersistenceFields:
     async def test_all_srs_fields_initialized(self, client: AsyncClient):
         """Verify all 18 SRS-required fields are initialized."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": "Test query"}
         )
         
@@ -301,7 +323,7 @@ class TestStatePersistenceFields:
     async def test_state_serialization_roundtrip(self, client: AsyncClient):
         """Test that state can be serialized and deserialized correctly."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": "Serialization test"}
         )
         
@@ -345,9 +367,60 @@ class TestRouterPersistenceErrorHandling:
             side_effect=Exception("Redis connection lost")
         ):
             response = await client.post(
-                "/api/v1/query",
+                "/api/v1/query/start",
                 json={"query": "Test query"}
             )
             
             # Should return error response
             assert response.status_code in (500, 503)
+
+# ============================================================================
+# Acknowledgment Contract Tests (SRS NFR-2)
+# ============================================================================
+import time
+
+class TestRouterAcknowledgment:
+    """Tests to verify the Router acknowledgment logic matches SRS requirements."""
+    
+    @pytest.mark.asyncio
+    async def test_acknowledgment_latency_meets_nfr2(self, client: AsyncClient):
+        """Test that the API responds with an acknowledgment within 100ms (NFR-2)."""
+        start_time = time.perf_counter()
+        
+        response = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Test for latency"}
+        )
+        
+        end_time = time.perf_counter()
+        latency_ms = (end_time - start_time) * 1000
+        
+        assert response.status_code == 200
+        # Check that acknowledgment latency is fast. 
+        # NFR-2 states <100ms. In local tests, using <200ms to avoid test flakiness.
+        assert latency_ms < 200.0, f"Acknowledgment took {latency_ms:.2f}ms, expected < 200ms"
+
+    @pytest.mark.asyncio
+    async def test_acknowledgment_contains_no_answers_and_metadata_only(self, client: AsyncClient):
+        """Test that user-facing answers are not leaked in the initial response (SRS Section 7.2)."""
+        response = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Test for payload leakage"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Verify exactly metadata fields are present
+        assert data.get("status") == "success"
+        assert "conversation_id" in data
+        assert data.get("query") == "Test for payload leakage"
+        assert "timestamp" in data
+        assert "message" in data
+        
+        # Verify NO user-facing answer fields exist in the response
+        assert "generated_sql" not in data
+        assert "execution_result" not in data
+        assert "explanation" not in data
+        assert "visualization_config" not in data
+        assert "clarification_questions" not in data

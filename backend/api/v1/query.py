@@ -8,7 +8,7 @@ the Router request schema. This is the entry point for all query requests.
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
-from fastapi import APIRouter, status, Request, Depends
+from fastapi import APIRouter, status, Request, Depends, HTTPException, BackgroundTasks
 from pydantic import ValidationError
 from schemas.router import (
     RouterRequest,
@@ -16,9 +16,13 @@ from schemas.router import (
     RouterErrorResponse,
     RouterErrorCode,
     UserContext,
+    QueryStatusResponse,
+    QueryRespondRequest,
+    QueryRespondResponse,
 )
 from services.conversation_state import conversation_state_manager
 from services.router_service import get_router_service
+from services.orchestrator import get_orchestrator_service
 from utils.auth import verify_clerk_token
 from utils.security import sanitize_user_context_for_log
 
@@ -72,7 +76,7 @@ def map_validation_error_to_router_error(validation_error: ValidationError) -> t
 
 
 @router.post(
-    "/query",
+    "/start",
     response_model=RouterInitResponse,
     status_code=status.HTTP_200_OK,
     summary="Initialize Query Request",
@@ -115,6 +119,7 @@ any LLM processing - it simply validates and initializes the request.
 async def initialize_query(
     request: Request,
     payload: RouterRequest,
+    background_tasks: BackgroundTasks,
     user_claims: Dict[str, Any] = Depends(verify_clerk_token),
 ) -> RouterInitResponse:
     """
@@ -148,11 +153,18 @@ async def initialize_query(
 
     # Build enriched user/session metadata:
     # - Start from the payload's user_context (default to empty UserContext if omitted).
+    # - ALWAYS override user_id from the verified JWT "sub" claim — the client-supplied
+    #   value is a convenience hint only; the JWT sub is the authoritative identity.
     # - Auto-populate ip_address from the real client IP if the caller did not supply it.
     user_context: UserContext = payload.user_context if payload.user_context is not None else UserContext()
+
+    # 1. Inject verified user identity from JWT (cannot be spoofed by client)
+    user_context = user_context.model_copy(update={"user_id": user_id})
+
+    # 2. Auto-populate ip_address from real client IP if not provided
     if user_context.ip_address is None and request.client is not None:
         user_context = user_context.model_copy(update={"ip_address": request.client.host})
-    
+
     # Convert user_context to dict for persistence
     user_context_dict = user_context.model_dump()
 
@@ -194,6 +206,14 @@ async def initialize_query(
     request.state.conversation_id = conversation_id
     request.state.user_context = merged_ctx
 
+    # Store database_id in conversation metadata (needed by orchestrator for DB queries)
+    if payload.database_id:
+        state_to_update = await conversation_state_manager.get_state(conversation_id)
+        if state_to_update:
+            state_to_update.metadata["database_id"] = payload.database_id
+            state_to_update.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            await conversation_state_manager.save_state(state_to_update)
+
     # Log safe (non-sensitive) metadata only — ip_address is intentionally excluded.
     safe_ctx = sanitize_user_context_for_log(merged_ctx)
     logger.info(
@@ -209,10 +229,173 @@ async def initialize_query(
         message="Query initialized successfully"
     )
     
+    
     logger.info(
         f"Query initialized: conversation_id={conversation_id}",
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
-    
+
+    # Kick off persona pipeline as a background task so the HTTP response
+    # is returned immediately and the client can start polling /status/{id}.
+    # Only launch for new conversations — resuming after clarification is
+    # handled via POST /respond which updates state directly.
+    if not existing_state:
+        orchestrator = get_orchestrator_service()
+        background_tasks.add_task(orchestrator.execute_conversation, conversation_id)
+        logger.info(
+            f"Orchestrator enqueued: conversation_id={conversation_id}",
+            extra={'extra_fields': {'correlation_id': correlation_id}}
+        )
+
     return response
 
+
+@router.get(
+    "/status/{conversation_id}",
+    response_model=QueryStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get Conversation Status",
+    description="""
+Poll the current state of a conversation.
+
+Returns a snapshot of the conversation including status, current execution stage,
+pending clarification questions, generated SQL, and results (when available).
+
+**Terminal statuses**: `complete`, `error`, `timeout`, `cancelled` — polling should stop.
+**Active statuses**: `processing`, `clarification_needed` — keep polling.
+
+Returns 404 if the conversation_id is not found (expired TTL or invalid ID).
+    """,
+    responses={
+        200: {"description": "Conversation state snapshot", "model": QueryStatusResponse},
+        404: {"description": "Conversation not found or expired"},
+        422: {"description": "Invalid conversation_id format"},
+    },
+    tags=["Query"],
+)
+async def get_conversation_status(
+    conversation_id: str,
+    _user_claims: Dict[str, Any] = Depends(verify_clerk_token),
+) -> QueryStatusResponse:
+    """
+    Return the current state of a conversation by ID.
+
+    Used by the frontend polling loop to drive UI state transitions.
+    """
+    state = await conversation_state_manager.get_state(conversation_id)
+
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation '{conversation_id}' not found or has expired.",
+        )
+
+    logger.debug(
+        f"Status polled: conversation_id={conversation_id}, "
+        f"status={state.status.value}, stage={state.current_stage.value}"
+    )
+
+    return QueryStatusResponse(
+        conversation_id=state.conversation_id,
+        status=state.status.value,
+        current_stage=state.current_stage.value,
+        awaiting_user_response=state.awaiting_user_response,
+        pending_clarification_questions=state.pending_clarification_questions,
+        generated_sql=state.generated_sql,
+        execution_result=state.execution_result,
+        explanation=state.explanation,
+    )
+
+
+@router.post(
+    "/respond",
+    response_model=QueryRespondResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Respond to Clarification",
+    description="""
+Submit answers to pending clarification questions and resume execution.
+
+The conversation_id must be a valid UUID v4 that maps to an existing conversation
+in `clarification_needed` state. Answers are appended to `clarification_history`,
+`pending_clarification_questions` is cleared, and `awaiting_user_response` is
+set to False. The conversation status transitions back to `processing`.
+    """,
+    responses={
+        200: {"description": "Answers recorded, execution resumed", "model": QueryRespondResponse},
+        404: {"description": "Conversation not found or expired"},
+        409: {"description": "Conversation is not in clarification_needed state"},
+        422: {"description": "Validation error"},
+    },
+    tags=["Query"],
+)
+async def respond_to_clarification(
+    payload: QueryRespondRequest,
+    background_tasks: BackgroundTasks,
+    _user_claims: Dict[str, Any] = Depends(verify_clerk_token),
+) -> QueryRespondResponse:
+    """
+    Record clarification answers and transition conversation back to processing.
+    """
+    from schemas.conversation import ConversationStatus, ClarificationQuestion
+
+    state = await conversation_state_manager.get_state(payload.conversation_id)
+
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation '{payload.conversation_id}' not found or has expired.",
+        )
+
+    if state.status != ConversationStatus.CLARIFICATION_NEEDED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot respond: conversation is in state '{state.status.value}', "
+                f"expected 'clarification_needed'."
+            ),
+        )
+
+    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+    # Append answers to clarification history
+    for i, question in enumerate(state.pending_clarification_questions):
+        answer_text = payload.answers[i] if i < len(payload.answers) else ""
+        # If a single message was given instead of per-question answers, use that
+        if not answer_text and payload.message:
+            answer_text = payload.message
+        state.clarification_history.append(ClarificationQuestion(
+            question=question,
+            answer=answer_text,
+            timestamp=now,
+        ).model_dump())
+
+    # Clear pending questions and resume
+    state.pending_clarification_questions = []
+    state.awaiting_user_response = False
+    state.status = ConversationStatus.PROCESSING
+
+    # Optionally update database_id in metadata
+    if payload.database_id:
+        state.metadata["database_id"] = payload.database_id
+
+    state.updated_at = now
+
+    await conversation_state_manager.save_state(state)
+
+    logger.info(
+        f"Clarification answered: conversation_id={state.conversation_id}, "
+        f"answers_count={len(payload.answers)}"
+    )
+
+    # Re-launch the orchestrator pipeline so it can continue from where it paused.
+    # The orchestrator will see the cleared pending_clarification_questions and
+    # pick up from the next stage in PIPELINE.
+    orchestrator = get_orchestrator_service()
+    background_tasks.add_task(orchestrator.execute_conversation, state.conversation_id)
+
+    return QueryRespondResponse(
+        conversation_id=state.conversation_id,
+        status=state.status.value,
+        current_stage=state.current_stage.value,
+        message="Clarification answers recorded",
+    )

@@ -235,7 +235,7 @@ class TestEndpointValidationEdgeCases:
     async def test_integer_query_in_json_rejected(self, client):
         """Sending an integer as 'query' should return 400 INVALID_QUERY."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": 12345},
         )
 
@@ -250,7 +250,7 @@ class TestEndpointValidationEdgeCases:
     async def test_extra_fields_in_body_accepted(self, client):
         """Extra unknown fields in the JSON body should be silently dropped."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "valid query",
                 "rogue_field": "should be ignored",
@@ -266,7 +266,7 @@ class TestEndpointValidationEdgeCases:
     async def test_empty_json_object_rejected(self, client):
         """An empty JSON object {} (missing required 'query') → 422."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={},
         )
 
@@ -276,7 +276,7 @@ class TestEndpointValidationEdgeCases:
     async def test_list_query_in_json_rejected(self, client):
         """Sending a list as 'query' should return 400."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": ["a", "b"]},
         )
 

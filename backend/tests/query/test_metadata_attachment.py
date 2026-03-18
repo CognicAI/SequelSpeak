@@ -117,13 +117,13 @@ class TestMetadataAttachmentEndpoint:
         payload: dict[str, Any] = {
             "query": "Show total sales",
             "user_context": {
-                "user_id": "user-store-test",
+                "user_id": "test-user-id-00000000",
                 "session_id": "sess-store-test",
                 "ip_address": "203.0.113.1"
             }
         }
 
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         assert response.status_code == 200
         conv_id: str = response.json()["conversation_id"]
 
@@ -131,7 +131,7 @@ class TestMetadataAttachmentEndpoint:
         assert state is not None
         stored_ctx = state.metadata["user_context"]
 
-        assert stored_ctx["user_id"] == "user-store-test"
+        assert stored_ctx["user_id"] == "test-user-id-00000000"
         assert stored_ctx["session_id"] == "sess-store-test"
         assert stored_ctx["ip_address"] == "203.0.113.1"
 
@@ -147,7 +147,7 @@ class TestMetadataAttachmentEndpoint:
             }
         }
 
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         assert response.status_code == 200
         conv_id: str = response.json()["conversation_id"]
 
@@ -170,7 +170,7 @@ class TestMetadataAttachmentEndpoint:
             }
         }
 
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         assert response.status_code == 200
         conv_id: str = response.json()["conversation_id"]
 
@@ -183,7 +183,7 @@ class TestMetadataAttachmentEndpoint:
         """Endpoint persists metadata even when user_context is omitted from request."""
         payload = {"query": "What is the average order value?"}
 
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         assert response.status_code == 200
         conv_id: str = response.json()["conversation_id"]
 
@@ -199,7 +199,7 @@ class TestMetadataAttachmentEndpoint:
             "user_context": None,
         }
 
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         # null is treated the same as omitting user_context — should succeed
         assert response.status_code == 200
 
@@ -230,7 +230,7 @@ class TestMetadataAttachmentEndpoint:
         handler = CapturingHandler()
         logging.getLogger("api.v1.query").addHandler(handler)
         try:
-            response = await client.post("/api/v1/query", json=payload)
+            response = await client.post("/api/v1/query/start", json=payload)
             assert response.status_code == 200
         finally:
             logging.getLogger("api.v1.query").removeHandler(handler)
@@ -259,13 +259,13 @@ class TestRequestStateUserContext:
         payload: dict[str, Any] = {
             "query": "Top 10 customers by revenue",
             "user_context": {
-                "user_id": "user-state-check",
+                "user_id": "test-user-id-00000000",
                 "session_id": "sess-state-check",
                 "ip_address": "172.16.0.1"
             }
         }
 
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         assert response.status_code == 200
         conv_id: str = response.json()["conversation_id"]
 
@@ -273,7 +273,7 @@ class TestRequestStateUserContext:
         assert state is not None
         ctx = state.metadata["user_context"]
 
-        assert ctx["user_id"] == "user-state-check"
+        assert ctx["user_id"] == "test-user-id-00000000"
         assert ctx["session_id"] == "sess-state-check"
         assert ctx["ip_address"] == "172.16.0.1"
 
@@ -282,9 +282,9 @@ class TestRequestStateUserContext:
         """Metadata persisted in first turn is retrievable in subsequent turns."""
         payload_turn1: dict[str, Any] = {
             "query": "First turn query",
-            "user_context": {"user_id": "multi-turn-user", "session_id": "mt-sess"}
+            "user_context": {"user_id": "test-user-id-00000000", "session_id": "mt-sess"}
         }
-        r1 = await client.post("/api/v1/query", json=payload_turn1)
+        r1 = await client.post("/api/v1/query/start", json=payload_turn1)
         assert r1.status_code == 200
         conv_id: str = r1.json()["conversation_id"]
 
@@ -293,11 +293,11 @@ class TestRequestStateUserContext:
             "query": "Follow-up query",
             "conversation_id": conv_id
         }
-        r2 = await client.post("/api/v1/query", json=payload_turn2)
+        r2 = await client.post("/api/v1/query/start", json=payload_turn2)
         assert r2.status_code == 200
         assert r2.json()["conversation_id"] == conv_id
 
         # State from first turn should still be intact
         state = await conversation_state_manager.get_state(conv_id)
         assert state is not None
-        assert state.metadata["user_context"]["user_id"] == "multi-turn-user"
+        assert state.metadata["user_context"]["user_id"] == "test-user-id-00000000"

@@ -10,6 +10,8 @@
 
 import type { TestConnectionSuccessResponse } from '../../types/api';
 import type { ConnectionProfile, ProfileCreateRequest, ProfileUpdateRequest } from '../../types/profile';
+import type { QueryStartRequest, QueryStartResponse } from '../../types/query';
+import type { QueryStatusResponse, QueryRespondRequest, QueryRespondResponse } from '../../types/conversation';
 import { ApiError } from './errors';
 
 class ApiClient {
@@ -137,6 +139,65 @@ class ApiClient {
         return this.request<void>(`/api/v1/profiles/${profileId}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${token}` },
+        });
+    }
+
+    /**
+     * Initialises a natural-language query (POST /api/v1/query/start).
+     *
+     * Returns 200 OK with a conversation_id the caller must persist so it
+     * can poll for results or continue a multi-turn conversation.
+     *
+     * @param payload - QueryStartRequest body
+     * @param token   - Clerk JWT for authenticated requests
+     * @param signal  - Optional AbortSignal for cancellation
+     */
+    async startQuery(
+        payload: QueryStartRequest,
+        token: string,
+        signal?: AbortSignal,
+    ): Promise<QueryStartResponse> {
+        return this.request<QueryStartResponse>('/api/v1/query/start', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: JSON.stringify(payload),
+            signal,
+        });
+    }
+
+    /**
+     * Polls the current state of a conversation.
+     * GET /api/v1/query/status/{conversationId}
+     */
+    async getConversationStatus(
+        conversationId: string,
+        token: string,
+        signal?: AbortSignal,
+    ): Promise<QueryStatusResponse> {
+        return this.request<QueryStatusResponse>(
+            `/api/v1/query/status/${encodeURIComponent(conversationId)}`,
+            {
+                method: 'GET',
+                headers: { Authorization: `Bearer ${token}` },
+                signal,
+            },
+        );
+    }
+
+    /**
+     * Submits answers to pending clarification questions and resumes execution.
+     * POST /api/v1/query/respond
+     */
+    async respondToConversation(
+        payload: QueryRespondRequest,
+        token: string,
+        signal?: AbortSignal,
+    ): Promise<QueryRespondResponse> {
+        return this.request<QueryRespondResponse>('/api/v1/query/respond', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: JSON.stringify(payload),
+            signal,
         });
     }
 }

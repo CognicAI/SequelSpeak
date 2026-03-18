@@ -39,7 +39,7 @@ class TestQueryEndpointWithConversationState:
             "query": "SELECT * FROM users"
         }
         
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         
         assert response.status_code == 200
         data = response.json()
@@ -61,7 +61,7 @@ class TestQueryEndpointWithConversationState:
         payload1 = {
             "query": "SELECT * FROM users"
         }
-        response1 = await client.post("/api/v1/query", json=payload1)
+        response1 = await client.post("/api/v1/query/start", json=payload1)
         conv_id = response1.json()["conversation_id"]
         
         # Second query with same conversation_id
@@ -69,7 +69,7 @@ class TestQueryEndpointWithConversationState:
             "query": "SELECT * FROM orders",
             "conversation_id": conv_id
         }
-        response2 = await client.post("/api/v1/query", json=payload2)
+        response2 = await client.post("/api/v1/query/start", json=payload2)
         
         assert response2.status_code == 200
         data2 = response2.json()
@@ -88,7 +88,7 @@ class TestQueryEndpointWithConversationState:
             }
         }
         
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         
         assert response.status_code == 200
         data = response.json()
@@ -104,7 +104,7 @@ class TestQueryEndpointWithConversationState:
         """Test that conversation state persists across multiple queries."""
         # Create initial conversation
         payload1 = {"query": "First query"}
-        response1 = await client.post("/api/v1/query", json=payload1)
+        response1 = await client.post("/api/v1/query/start", json=payload1)
         conv_id = response1.json()["conversation_id"]
         
         # Make multiple queries with same conversation_id
@@ -113,7 +113,7 @@ class TestQueryEndpointWithConversationState:
                 "query": f"Query number {i}",
                 "conversation_id": conv_id
             }
-            response = await client.post("/api/v1/query", json=payload)
+            response = await client.post("/api/v1/query/start", json=payload)
             assert response.status_code == 200
             assert response.json()["conversation_id"] == conv_id
     
@@ -125,7 +125,7 @@ class TestQueryEndpointWithConversationState:
             "conversation_id": "not-a-valid-uuid"
         }
         
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         
         # Should return validation error
         assert response.status_code == 400
@@ -140,7 +140,7 @@ class TestQueryEndpointWithConversationState:
             "user_context": {"user_id": "123"}
         }
         
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         
         assert response.status_code == 200
         data = response.json()
@@ -168,7 +168,7 @@ class TestAsyncConversationIntegration:
         """Test that endpoint creates conversation state in manager."""
         payload = {"query": "Test query"}
         
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         conv_id = response.json()["conversation_id"]
         
         # Verify state exists in manager
@@ -179,13 +179,13 @@ class TestAsyncConversationIntegration:
     @pytest.mark.asyncio
     async def test_conversation_metadata_stored(self, client):
         """Test that user_context is stored as metadata."""
-        user_context = {"user_id": "user-456", "session_id": "session-abc"}
+        user_context = {"user_id": "test-user-id-00000000", "session_id": "session-abc"}
         payload = {
             "query": "Test query",
             "user_context": user_context
         }
         
-        response = await client.post("/api/v1/query", json=payload)
+        response = await client.post("/api/v1/query/start", json=payload)
         conv_id = response.json()["conversation_id"]
         
         # Verify metadata
@@ -194,7 +194,7 @@ class TestAsyncConversationIntegration:
         assert "user_context" in state.metadata
         # UserContext schema normalizes by adding None for missing fields
         stored_context = state.metadata["user_context"]
-        assert stored_context["user_id"] == "user-456"
+        assert stored_context["user_id"] == "test-user-id-00000000"
         assert stored_context["session_id"] == "session-abc"
 
 
@@ -214,7 +214,7 @@ class TestErrorHandling:
         
         try:
             payload = {"query": "SELECT * FROM users"}
-            response = await client.post("/api/v1/query", json=payload)
+            response = await client.post("/api/v1/query/start", json=payload)
             
             assert response.status_code == 200
             data = response.json()

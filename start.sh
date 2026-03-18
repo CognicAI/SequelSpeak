@@ -18,16 +18,16 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# Check venv exists in root
-if [ ! -d ".venv" ]; then
-    echo -e "${RED}Error: .venv not found in project root.${NC}"
-    echo -e "${YELLOW}Run: python3 -m venv .venv && source .venv/bin/activate && pip install -r backend/requirements.txt${NC}"
-    exit 1
-fi
-
 # Check backend folder exists
 if [ ! -d "backend" ]; then
     echo -e "${RED}Error: backend folder not found.${NC}"
+    exit 1
+fi
+
+# Check venv inside backend
+if [ ! -d "backend/.venv" ]; then
+    echo -e "${RED}Error: .venv not found in backend folder.${NC}"
+    echo -e "${YELLOW}Run: cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt${NC}"
     exit 1
 fi
 
@@ -42,11 +42,13 @@ fi
 ####################################
 echo -e "${GREEN}[Backend]${NC} Starting FastAPI server..."
 
+cd backend || exit 1
+
 source .venv/bin/activate
 
-cd backend || exit 1
 uvicorn main:app --reload --port 8000 --host 0.0.0.0 &
 BACKEND_PID=$!
+
 cd ..
 
 sleep 2

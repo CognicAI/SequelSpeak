@@ -30,7 +30,7 @@ class TestQueryValidationEndpoint:
     async def test_valid_request_with_conversation_id(self, client):
         """Test valid request with conversation ID."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Show me sales from last month",
                 "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
@@ -49,7 +49,7 @@ class TestQueryValidationEndpoint:
     async def test_valid_request_without_conversation_id(self, client):
         """Test valid request without conversation ID (will be generated)."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "How many active users do we have?"
             }
@@ -65,7 +65,7 @@ class TestQueryValidationEndpoint:
     async def test_valid_request_with_whitespace_stripped(self, client):
         """Test that leading/trailing whitespace is stripped from query."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "  Show me revenue  \n\t"
             }
@@ -79,7 +79,7 @@ class TestQueryValidationEndpoint:
     async def test_empty_query_rejected(self, client):
         """Test that empty query is rejected with appropriate error."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": ""
             }
@@ -95,7 +95,7 @@ class TestQueryValidationEndpoint:
     async def test_whitespace_only_query_rejected(self, client):
         """Test that whitespace-only query is rejected."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "   \n\t   "
             }
@@ -111,7 +111,7 @@ class TestQueryValidationEndpoint:
         long_query = "a" * 10001  # MAX_QUERY_LENGTH is 10000
         
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": long_query
             }
@@ -127,7 +127,7 @@ class TestQueryValidationEndpoint:
         max_length_query = "a" * 10000
         
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": max_length_query
             }
@@ -141,7 +141,7 @@ class TestQueryValidationEndpoint:
     async def test_query_with_null_byte_rejected(self, client):
         """Test that query with null byte is rejected."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "test\x00query"
             }
@@ -162,7 +162,7 @@ class TestQueryValidationEndpoint:
         
         for invalid_id in invalid_ids:
             response = await client.post(
-                "/api/v1/query",
+                "/api/v1/query/start",
                 json={
                     "query": "test query",
                     "conversation_id": invalid_id
@@ -177,7 +177,7 @@ class TestQueryValidationEndpoint:
     async def test_missing_query_field_rejected(self, client):
         """Test that request without query field is rejected."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
             }
@@ -189,7 +189,7 @@ class TestQueryValidationEndpoint:
     async def test_malformed_json_rejected(self, client):
         """Test that malformed JSON is rejected."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             content=b"{ invalid json }",
             headers={"Content-Type": "application/json"}
         )
@@ -200,7 +200,7 @@ class TestQueryValidationEndpoint:
     async def test_wrong_content_type_rejected(self, client):
         """Test that non-JSON content type is rejected."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             content=b"query=test",
             headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
@@ -211,7 +211,7 @@ class TestQueryValidationEndpoint:
     async def test_null_query_rejected(self, client):
         """Test that null query value is rejected."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": None
             }
@@ -228,7 +228,7 @@ class TestQueryValidationEndpoint:
     async def test_conversation_id_case_insensitive(self, client):
         """Test that conversation ID is case-insensitive and normalized."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "test query",
                 "conversation_id": "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"
@@ -246,7 +246,7 @@ class TestQueryValidationEndpoint:
         correlation_id = "test-correlation-123"
         
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={"query": "test"},
             headers={"X-Correlation-ID": correlation_id}
         )
@@ -312,7 +312,7 @@ class TestEdgeCases:
     async def test_unicode_characters_in_query(self, client):
         """Test that unicode characters are accepted."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Show me データ for 用户 with émojis 🎉"
             }
@@ -327,7 +327,7 @@ class TestEdgeCases:
     async def test_special_characters_in_query(self, client):
         """Test that special SQL characters are accepted (not filtered)."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "SELECT * FROM users WHERE name = 'O''Neill'"
             }
@@ -341,7 +341,7 @@ class TestEdgeCases:
     async def test_newlines_in_query(self, client):
         """Test that newlines in query are accepted."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "Show me sales\nfrom last month\nfor region 'North'"
             }
@@ -355,7 +355,7 @@ class TestEdgeCases:
     async def test_empty_user_context_accepted(self, client):
         """Test that empty user context is accepted."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "test",
                 "user_context": {}
@@ -368,7 +368,7 @@ class TestEdgeCases:
     async def test_partial_user_context_accepted(self, client):
         """Test that partial user context is accepted."""
         response = await client.post(
-            "/api/v1/query",
+            "/api/v1/query/start",
             json={
                 "query": "test",
                 "user_context": {
@@ -390,7 +390,7 @@ class TestOpenAPIDocumentation:
         
         assert response.status_code == 200
         schema = response.json()
-        assert "/api/v1/query" in schema["paths"]
+        assert "/api/v1/query/start" in schema["paths"]
     
     @pytest.mark.asyncio
     async def test_query_endpoint_has_proper_documentation(self, client):
@@ -398,7 +398,7 @@ class TestOpenAPIDocumentation:
         response = await client.get("/openapi.json")
         schema = response.json()
         
-        query_endpoint = schema["paths"]["/api/v1/query"]["post"]
+        query_endpoint = schema["paths"]["/api/v1/query/start"]["post"]
         assert "summary" in query_endpoint
         assert "description" in query_endpoint
         assert "requestBody" in query_endpoint
