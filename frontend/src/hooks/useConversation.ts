@@ -3,12 +3,12 @@
  *
  * Drives a ConversationViewModel via useReducer. Composes:
  *   - useConversationStart  (POST /query/start)
- *   - useConversationStatus (polling GET /query/status/{id})
+ *   - useConversationStatus (SSE stream GET /query/status/{id}/stream)
  *   - useConversationRespond (POST /query/respond)
  *
  * Credential expiry (FR-130): treated as a system error, not clarification.
- * Timeout (FR-82): detected from polling, dispatches CONVERSATION_TIMEOUT,
- *   stops polling, composer is disabled.
+ * Timeout (FR-82): detected from streaming, dispatches CONVERSATION_TIMEOUT,
+ *   stops streaming, composer is disabled.
  */
 
 import { useReducer, useCallback } from 'react';

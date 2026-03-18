@@ -79,7 +79,9 @@ export function useConversationStatus({
                 }
 
                 eventSourceRef.current?.close();
-                const streamUrl = `/api/v1/query/status/${encodeURIComponent(conversationId)}/stream?access_token=${encodeURIComponent(token)}`;
+                const rawBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                const baseUrl = rawBaseUrl.replace(/\/+$/, '');
+                const streamUrl = `${baseUrl}/api/v1/query/status/${encodeURIComponent(conversationId)}/stream?access_token=${encodeURIComponent(token)}`;
                 const source = new EventSource(streamUrl);
                 eventSourceRef.current = source;
 

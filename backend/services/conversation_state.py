@@ -19,7 +19,7 @@ import json
 import uuid
 import asyncio
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, TYPE_CHECKING, AsyncGenerator
 
 try:
     import redis.asyncio as redis
@@ -318,6 +318,7 @@ class ConversationStateManager:
         self._use_redis = settings.redis_enabled and REDIS_AVAILABLE
         self._redis_url: Optional[str] = None
         self._loop_id: Optional[int] = None  # Track which loop owns the Redis client
+        self._subscribers: Dict[str, set[asyncio.Queue[str]]] = {} # Local pub/sub fallback
         
         if settings.redis_enabled and not REDIS_AVAILABLE:
             logger.warning(
@@ -574,7 +575,66 @@ class ConversationStateManager:
             state: ConversationState to store
         """
         await self._store_state(state)
-    
+        
+        # Publish event for SSE listeners
+        data = json.dumps(state.to_dict())
+        
+        # 1. Publish to Redis if available
+        if self._use_redis and self._redis_client:
+            try:
+                channel = f"channel:convo:{state.conversation_id}"
+                await self._redis_client.publish(channel, data)  # type: ignore
+            except Exception as e:
+                logger.error(f"Failed to publish state to Redis pubsub: {e}")
+                
+        # 2. Always publish to local memory queues just in case
+        if state.conversation_id in self._subscribers:
+            for q in self._subscribers[state.conversation_id]:
+                q.put_nowait(data)
+
+    async def listen(self, conversation_id: str) -> AsyncGenerator[str, None]:
+        """
+        Listen for updates on a given conversation id via Pub/Sub.
+        Yields JSON strings of the conversation state.
+        """
+        if self._use_redis:
+            await self._ensure_redis_client()
+            
+        if self._use_redis and self._redis_client:
+            # Using Redis Pub/Sub
+            pubsub = self._redis_client.pubsub()  # type: ignore
+            channel = f"channel:convo:{conversation_id}"
+            await pubsub.subscribe(channel)  # type: ignore
+            try:
+                async for message in pubsub.listen():  # type: ignore
+                    if message and message['type'] == 'message':  # type: ignore
+                        # Redis gives us bytes or str depending on config
+                        data = message['data']  # type: ignore
+                        if isinstance(data, bytes):
+                            data = data.decode('utf-8')
+                        elif not isinstance(data, str):
+                            data = str(data)  # type: ignore
+                        yield data
+            finally:
+                await pubsub.unsubscribe(channel)  # type: ignore
+                await pubsub.close()
+        else:
+            # Using in-memory queue fallback
+            q: asyncio.Queue[str] = asyncio.Queue()
+            if conversation_id not in self._subscribers:
+                self._subscribers[conversation_id] = set()
+            self._subscribers[conversation_id].add(q)
+            try:
+                while True:
+                    data = await q.get()
+                    yield data
+                    q.task_done()
+            finally:
+                if conversation_id in self._subscribers:
+                    self._subscribers[conversation_id].discard(q)
+                    if not self._subscribers[conversation_id]:
+                        del self._subscribers[conversation_id]
+
     async def _store_state(self, state: ConversationState) -> None:
         """
         Store conversation state (internal method).

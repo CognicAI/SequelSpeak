@@ -346,6 +346,10 @@ class QueryStatusResponse(BaseModel):
     conversation_id: str = Field(..., description="UUID v4 conversation identifier")
     status: str = Field(..., description="ConversationStatus value (processing, clarification_needed, complete, error, timeout, cancelled)")
     current_stage: str = Field(..., description="Current ExecutionStage value")
+    current_persona: Optional[str] = Field(default=None, description="Current persona name (Router, SchemaExpert, etc.)")
+    completed_personas: list[str] = Field(default_factory=list, description="Ordered list of personas completed so far")
+    estimated_completion_ms: Optional[int] = Field(default=None, description="Best-effort remaining time estimate in ms")
+    progress_percentage: Optional[int] = Field(default=None, description="Pipeline progress percentage (0-100)")
     awaiting_user_response: bool = Field(default=False, description="True if execution is paused for clarification")
     pending_clarification_questions: list[str] = Field(
         default_factory=list,
@@ -354,6 +358,7 @@ class QueryStatusResponse(BaseModel):
     generated_sql: Optional[str] = Field(default=None, description="SQL produced by SQLWriter, if available")
     execution_result: Optional[Any] = Field(default=None, description="Query result rows/metadata from Executor")
     explanation: Optional[str] = Field(default=None, description="Plain-English explanation from Explainer")
+    persona_trace: list[dict[str, Any]] = Field(default_factory=list, description="Persona trace entries with timing metadata")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -361,11 +366,18 @@ class QueryStatusResponse(BaseModel):
                 "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
                 "status": "clarification_needed",
                 "current_stage": "clarification",
+                "current_persona": "Clarification",
+                "completed_personas": ["Router"],
+                "estimated_completion_ms": 2500,
+                "progress_percentage": 20,
                 "awaiting_user_response": True,
                 "pending_clarification_questions": ["What time period are you interested in?"],
                 "generated_sql": None,
                 "execution_result": None,
                 "explanation": None,
+                "persona_trace": [
+                    {"persona": "Router", "duration_ms": 100}
+                ],
             }
         }
     )

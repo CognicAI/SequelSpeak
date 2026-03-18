@@ -28,7 +28,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Any
 
 from schemas.conversation import ExecutionStage, ConversationStatus
 from services.conversation_state import ConversationStateManager, ConversationState
@@ -43,12 +43,14 @@ logger = logging.getLogger(__name__)
 # to poll and display stage transitions. Replace with actual LLM/DB latency
 # once real implementations are wired in.
 STAGE_DELAY: dict[ExecutionStage, float] = {
-    ExecutionStage.PLANNING:         0.4,
-    ExecutionStage.SCHEMA_RETRIEVAL: 0.6,
-    ExecutionStage.SQL_GENERATION:   0.8,
-    ExecutionStage.VALIDATION:       0.3,
-    ExecutionStage.EXECUTION:        0.5,
-    ExecutionStage.EXPLANATION:      0.4,
+    ExecutionStage.PLANNING:         1.0,
+    ExecutionStage.SCHEMA_RETRIEVAL: 1.5,
+    ExecutionStage.CONTEXT_RETRIEVAL: 1.0,
+    ExecutionStage.SQL_GENERATION:   2.0,
+    ExecutionStage.VALIDATION:       1.0,
+    ExecutionStage.EXECUTION:        1.5,
+    ExecutionStage.EXPLANATION:      2.0,
+    ExecutionStage.ANALYTICS:        1.0,
 }
 
 # Max times SQLWriter → SQLGuardian cycle is retried on validation failure
@@ -80,8 +82,10 @@ class StageResult:
         *,
         message: str = "",
         generated_sql: Optional[str] = None,
-        execution_result=None,
+        execution_result: Optional[dict[str, Any]] = None,
         explanation: Optional[str] = None,
+        visualization_config: Optional[dict[str, Any]] = None,
+        duration_ms: Optional[int] = None,
         clarification_questions: Optional[list[str]] = None,
         validation_errors: Optional[list[str]] = None,
     ):
@@ -90,6 +94,8 @@ class StageResult:
         self.generated_sql = generated_sql
         self.execution_result = execution_result
         self.explanation = explanation
+        self.visualization_config = visualization_config
+        self.duration_ms = duration_ms
         self.clarification_questions = clarification_questions or []
         self.validation_errors = validation_errors or []
 
@@ -133,24 +139,34 @@ class OrchestratorService:
     # Pipeline loop
     # ------------------------------------------------------------------
 
-    async def _run_pipeline(self, conversation_id: str) -> None:
+    async def _require_state(self, conversation_id: str) -> ConversationState:
         state = await self.state_manager.get_state(conversation_id)
         if state is None:
+            raise RuntimeError(f"State inexplicably lost for conversation {conversation_id}")
+        return state
+
+    async def _run_pipeline(self, conversation_id: str) -> None:
+        raw_state = await self.state_manager.get_state(conversation_id)
+        if raw_state is None:
             logger.warning(f"Orchestrator: conversation {conversation_id} not found at pipeline start")
             return
+        
+        state: ConversationState = raw_state
 
         user_id = state.metadata.get("user_context", {}).get("user_id", "unknown")
+        query_text = state.original_nl_query if state.original_nl_query else "unknown"
         logger.info(
             f"Orchestrator pipeline: conversation_id={conversation_id}, user_id={user_id}, "
-            f"query='{state.original_nl_query[:80]}'"
+            f"query='{query_text[:80]}'"
         )
 
         # --- Phase 1: Planning ---
         if await self._is_terminal_or_paused(conversation_id):
             return
-        state = await self.state_manager.get_state(conversation_id)
+        state = await self._require_state(conversation_id)
         await self._set_stage(state, ExecutionStage.PLANNING)
         result = await self.phase_planning(state)
+        await self._record_persona_result(state, "Router", ExecutionStage.PLANNING, result)
         if result.outcome == StageResult.PAUSE:
             await self._set_clarification(state, result.clarification_questions)
             return
@@ -161,31 +177,44 @@ class OrchestratorService:
         # --- Phase 2: Schema Retrieval ---
         if await self._is_terminal_or_paused(conversation_id):
             return
-        state = await self.state_manager.get_state(conversation_id)
+        state = await self._require_state(conversation_id)
         await self._set_stage(state, ExecutionStage.SCHEMA_RETRIEVAL)
         result = await self.phase_schema_retrieval(state)
+        await self._record_persona_result(state, "SchemaExpert", ExecutionStage.SCHEMA_RETRIEVAL, result)
         if result.outcome in (StageResult.ERROR, StageResult.COMPLETE):
             await self._handle_terminal(state, result)
             return
 
-        # --- Phase 3+4: SQLWriter → SQLGuardian with retry loop ---
+        # --- Phase 3: Context Retrieval ---
+        if await self._is_terminal_or_paused(conversation_id):
+            return
+        state = await self._require_state(conversation_id)
+        await self._set_stage(state, ExecutionStage.CONTEXT_RETRIEVAL)
+        result = await self.phase_context_retrieval(state)
+        await self._record_persona_result(state, "ContextRetriever", ExecutionStage.CONTEXT_RETRIEVAL, result)
+        if result.outcome in (StageResult.ERROR, StageResult.COMPLETE):
+            await self._handle_terminal(state, result)
+            return
+
+        # --- Phase 4+5: SQLWriter → SQLGuardian with retry loop ---
         sql_attempt = 0
         current_sql: Optional[str] = None
         while sql_attempt <= SQL_VALIDATION_MAX_RETRIES:
             if await self._is_terminal_or_paused(conversation_id):
                 return
 
-            state = await self.state_manager.get_state(conversation_id)
+            state = await self._require_state(conversation_id)
             await self._set_stage(state, ExecutionStage.SQL_GENERATION)
 
             gen_result = await self.phase_sql_generation(state, attempt=sql_attempt)
+            await self._record_persona_result(state, "SQLWriter", ExecutionStage.SQL_GENERATION, gen_result)
             if gen_result.outcome == StageResult.ERROR:
                 await self._mark_error(conversation_id, gen_result.message)
                 return
             current_sql = gen_result.generated_sql
 
             # Persist generated SQL immediately so polling can show it
-            state = await self.state_manager.get_state(conversation_id)
+            state = await self._require_state(conversation_id)
             if state and current_sql:
                 state.generated_sql = current_sql
                 state.updated_at = self._now()
@@ -194,10 +223,11 @@ class OrchestratorService:
             # Validation
             if await self._is_terminal_or_paused(conversation_id):
                 return
-            state = await self.state_manager.get_state(conversation_id)
+            state = await self._require_state(conversation_id)
             await self._set_stage(state, ExecutionStage.VALIDATION)
 
             val_result = await self.phase_validation(state, sql=current_sql)
+            await self._record_persona_result(state, "SQLGuardian", ExecutionStage.VALIDATION, val_result)
             if val_result.outcome == StageResult.CONTINUE:
                 break  # Validation passed — exit retry loop
             if val_result.outcome == StageResult.ERROR:
@@ -224,34 +254,56 @@ class OrchestratorService:
                 )
                 continue
 
-        # --- Phase 5: Execution ---
+        # --- Phase 6: Execution ---
         if await self._is_terminal_or_paused(conversation_id):
             return
-        state = await self.state_manager.get_state(conversation_id)
+        state = await self._require_state(conversation_id)
         await self._set_stage(state, ExecutionStage.EXECUTION)
         result = await self.phase_execution(state, sql=current_sql)
+        await self._record_persona_result(state, "Executor", ExecutionStage.EXECUTION, result)
         if result.outcome in (StageResult.ERROR, StageResult.COMPLETE):
             await self._handle_terminal(state, result)
             return
 
         # Persist execution result
-        state = await self.state_manager.get_state(conversation_id)
+        state = await self._require_state(conversation_id)
         if state and result.execution_result is not None:
             state.execution_result = result.execution_result
             state.updated_at = self._now()
             await self.state_manager.save_state(state)
 
-        # --- Phase 6: Explanation → COMPLETE ---
+        # --- Phase 7: Explanation ---
         if await self._is_terminal_or_paused(conversation_id):
             return
-        state = await self.state_manager.get_state(conversation_id)
+        state = await self._require_state(conversation_id)
         await self._set_stage(state, ExecutionStage.EXPLANATION)
         result = await self.phase_explanation(state, execution_result=result.execution_result)
+        await self._record_persona_result(state, "Explainer", ExecutionStage.EXPLANATION, result)
+
+        if result.outcome in (StageResult.ERROR, StageResult.COMPLETE):
+            await self._handle_terminal(state, result)
+            return
+
+        # --- Phase 8: Analytics ---
+        if await self._is_terminal_or_paused(conversation_id):
+            return
+        state = await self._require_state(conversation_id)
+        await self._set_stage(state, ExecutionStage.ANALYTICS)
+        analytics_result = await self.phase_analytics(state, execution_result=result.execution_result)
+        await self._record_persona_result(state, "Analytics", ExecutionStage.ANALYTICS, analytics_result)
+        if analytics_result.outcome in (StageResult.ERROR, StageResult.COMPLETE):
+            await self._handle_terminal(state, analytics_result)
+            return
+
+        if analytics_result.visualization_config is not None:
+            state = await self._require_state(conversation_id)
+            state.visualization_config = analytics_result.visualization_config
+            state.updated_at = self._now()
+            await self.state_manager.save_state(state)
 
         # Always terminal from here
-        state = await self.state_manager.get_state(conversation_id)
-        if state:
-            await self._mark_complete(state, result)
+        state = await self._require_state(conversation_id)
+        await self._mark_complete(state, result)
 
     # ------------------------------------------------------------------
     # Guard helper
@@ -292,14 +344,14 @@ class OrchestratorService:
         await asyncio.sleep(STAGE_DELAY[ExecutionStage.PLANNING])
         elapsed = time.perf_counter() - t0
 
-        query = state.original_nl_query
+        query = state.original_nl_query or ""
         user_id = state.metadata.get("user_context", {}).get("user_id", "unknown")
 
         logger.info(
             f"[Router] Planning: query='{query[:120]}', user_id={user_id}, "
             f"elapsed={elapsed:.2f}s (conversation_id={state.conversation_id})"
         )
-        return StageResult(StageResult.CONTINUE)
+        return StageResult(StageResult.CONTINUE, duration_ms=round(elapsed * 1000))
 
     async def phase_schema_retrieval(self, state: ConversationState) -> StageResult:
         """
@@ -318,7 +370,23 @@ class OrchestratorService:
             f"elapsed={elapsed:.2f}s (conversation_id={state.conversation_id})"
         )
         # Stub: real impl stores schema context in metadata["schema_context"]
-        return StageResult(StageResult.CONTINUE)
+        return StageResult(StageResult.CONTINUE, duration_ms=round(elapsed * 1000))
+
+    async def phase_context_retrieval(self, state: ConversationState) -> StageResult:
+        """
+        ContextRetriever persona: fetch similar historical queries/examples.
+
+        Real implementation: semantic retrieval from pgvector/query history.
+        """
+        t0 = time.perf_counter()
+        await asyncio.sleep(STAGE_DELAY[ExecutionStage.CONTEXT_RETRIEVAL])
+        elapsed = time.perf_counter() - t0
+
+        logger.info(
+            f"[ContextRetriever] Context gathered: elapsed={elapsed:.2f}s "
+            f"(conversation_id={state.conversation_id})"
+        )
+        return StageResult(StageResult.CONTINUE, duration_ms=round(elapsed * 1000))
 
     async def phase_sql_generation(
         self,
@@ -348,7 +416,11 @@ class OrchestratorService:
             f"sql='{stub_sql[:120]}', elapsed={elapsed:.2f}s "
             f"(conversation_id={state.conversation_id})"
         )
-        return StageResult(StageResult.CONTINUE, generated_sql=stub_sql)
+        return StageResult(
+            StageResult.CONTINUE,
+            generated_sql=stub_sql,
+            duration_ms=round(elapsed * 1000),
+        )
 
     async def phase_validation(
         self,
@@ -381,8 +453,12 @@ class OrchestratorService:
         )
 
         if not is_valid:
-            return StageResult(StageResult.RETRY, validation_errors=errors)
-        return StageResult(StageResult.CONTINUE)
+            return StageResult(
+                StageResult.RETRY,
+                validation_errors=errors,
+                duration_ms=round(elapsed * 1000),
+            )
+        return StageResult(StageResult.CONTINUE, duration_ms=round(elapsed * 1000))
 
     async def phase_execution(
         self,
@@ -400,19 +476,23 @@ class OrchestratorService:
         elapsed = time.perf_counter() - t0
 
         target_sql = sql or state.generated_sql or "(no SQL)"
-        stub_result = {"rows": [], "row_count": 0, "columns": [], "execution_time_ms": round(elapsed * 1000)}
+        stub_result: dict[str, Any] = {"rows": [], "row_count": 0, "columns": [], "execution_time_ms": round(elapsed * 1000)}
 
         logger.info(
             f"[Executor] Executed: sql='{target_sql[:80]}', "
             f"rows={stub_result['row_count']}, time={elapsed:.2f}s "
             f"(conversation_id={state.conversation_id})"
         )
-        return StageResult(StageResult.CONTINUE, execution_result=stub_result)
+        return StageResult(
+            StageResult.CONTINUE,
+            execution_result=stub_result,
+            duration_ms=round(elapsed * 1000),
+        )
 
     async def phase_explanation(
         self,
         state: ConversationState,
-        execution_result=None,
+        execution_result: Optional[dict[str, Any]] = None,
     ) -> StageResult:
         """
         Explainer persona: generate plain-English explanation of the results.
@@ -434,9 +514,41 @@ class OrchestratorService:
             f"(conversation_id={state.conversation_id})"
         )
         return StageResult(
-            StageResult.COMPLETE,
+            StageResult.CONTINUE,
             explanation=stub_explanation,
             execution_result=execution_result,
+            duration_ms=round(elapsed * 1000),
+        )
+
+    async def phase_analytics(
+        self,
+        state: ConversationState,
+        execution_result: Optional[dict[str, Any]] = None,
+    ) -> StageResult:
+        """
+        Analytics persona: decide whether and how to visualize results.
+        """
+        t0 = time.perf_counter()
+        await asyncio.sleep(STAGE_DELAY[ExecutionStage.ANALYTICS])
+        elapsed = time.perf_counter() - t0
+
+        row_count = int((execution_result or {}).get("row_count", 0))
+        visualization_required = row_count > 0
+        viz_config: dict[str, Any] = {
+            "visualization_required": visualization_required,
+            "chart_type": "table" if visualization_required else None,
+            "time_bucket": None,
+        }
+
+        logger.info(
+            f"[Analytics] Visualization decision: required={visualization_required}, "
+            f"elapsed={elapsed:.2f}s (conversation_id={state.conversation_id})"
+        )
+        return StageResult(
+            StageResult.CONTINUE,
+            execution_result=execution_result,
+            visualization_config=viz_config,
+            duration_ms=round(elapsed * 1000),
         )
 
     # ------------------------------------------------------------------
@@ -452,6 +564,34 @@ class OrchestratorService:
         logger.info(
             f"Stage → {stage.value} (conversation_id={state.conversation_id})"
         )
+
+    async def _record_persona_result(
+        self,
+        state: ConversationState,
+        persona_name: str,
+        stage: ExecutionStage,
+        result: StageResult,
+    ) -> None:
+        """Append persona trace entry and maintain completed persona list."""
+        trace_entry: dict[str, Any] = {
+            "persona_name": persona_name,
+            "stage": stage.value,
+            "input_data": {},
+            "output_data": {
+                "outcome": result.outcome,
+                "message": result.message,
+            },
+            "timestamp": self._now(),
+            "duration_ms": result.duration_ms,
+        }
+        state.persona_trace.append(trace_entry)
+
+        if result.outcome in (StageResult.CONTINUE, StageResult.COMPLETE):
+            if persona_name not in state.completed_stages:
+                state.completed_stages.append(persona_name)
+
+        state.updated_at = self._now()
+        await self.state_manager.save_state(state)
 
     async def _set_clarification(
         self,
@@ -494,6 +634,8 @@ class OrchestratorService:
             state.execution_result = result.execution_result
         if result.explanation:
             state.explanation = result.explanation
+        if result.visualization_config is not None:
+            state.visualization_config = result.visualization_config
         state.updated_at = self._now()
         await self.state_manager.save_state(state)
         user_id = state.metadata.get("user_context", {}).get("user_id", "unknown")
@@ -505,7 +647,7 @@ class OrchestratorService:
 
     async def _mark_error(self, conversation_id: str, message: str) -> None:
         """Transition conversation to error state."""
-        state = await self.state_manager.get_state(conversation_id)
+        state = await self._require_state(conversation_id)
         if not state:
             return
         state.status = ConversationStatus.ERROR
