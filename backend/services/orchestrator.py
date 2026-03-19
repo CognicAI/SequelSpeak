@@ -31,6 +31,8 @@ from datetime import datetime, timezone
 from typing import Optional, Any
 from schemas.conversation import ExecutionStage, ConversationStatus  # type: ignore
 from services.conversation_state import ConversationStateManager, ConversationState  # type: ignore
+from personas.router import RouterPersona, RouterInput
+from personas.clarification import ClarificationPersona, ClarificationInput
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,8 @@ class OrchestratorService:
 
     def __init__(self, state_manager: ConversationStateManager) -> None:
         self.state_manager = state_manager
+        self.router_persona = RouterPersona()
+        self.clarification_persona = ClarificationPersona()
 
     # ------------------------------------------------------------------
     # Entry point (called by background tasks)
@@ -349,8 +353,45 @@ class OrchestratorService:
         query = state.current_nl_query or ""
         user_id = state.metadata.get("user_context", {}).get("user_id", "unknown")
 
+        router_input = RouterInput(
+            nl_query=query,
+            conversation_id=state.conversation_id,
+            user_context=state.metadata.get("user_context", {}),
+        )
+        decision = self.router_persona.decide(router_input)
+
+        # Persist execution plan and intent decision in state metadata.
+        state.execution_plan = decision.execution_plan
+        state.metadata["detected_intent"] = decision.detected_intent
+        state.updated_at = self._now()
+        await self.state_manager.save_state(state)
+
+        if decision.requires_clarification:
+            clarification = self.clarification_persona.generate(
+                ClarificationInput(
+                    ambiguities=decision.ambiguities,
+                    missing_params=decision.missing_params,
+                    context={
+                        "nl_query": query,
+                        "detected_intent": decision.detected_intent,
+                    },
+                )
+            )
+            logger.info(
+                f"[Router] Clarification required: intent={decision.detected_intent}, "
+                f"ambiguities={decision.ambiguities}, missing_params={decision.missing_params} "
+                f"(conversation_id={state.conversation_id})"
+            )
+            return StageResult(
+                StageResult.PAUSE,
+                message=clarification.pause_reason,
+                clarification_questions=clarification.questions,
+                duration_ms=round(elapsed * 1000),
+            )
+
         logger.info(
             f"[Router] Planning: query='{query[:120]}', user_id={user_id}, "
+            f"intent={decision.detected_intent}, next={decision.next_persona}, "
             f"elapsed={elapsed:.2f}s (conversation_id={state.conversation_id})"
         )
         return StageResult(StageResult.CONTINUE, duration_ms=round(elapsed * 1000))
