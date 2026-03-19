@@ -8,6 +8,11 @@ services:
     container_name: sequelspeak-migrate
     command: alembic upgrade head
     environment:
+      - ENVIRONMENT=${ENVIRONMENT}
+      - SECRET_KEY=${SECRET_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
       - INTERNAL_DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/sequelspeak
     depends_on:
       db:
@@ -25,6 +30,11 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - ENVIRONMENT=${ENVIRONMENT}
+      - SECRET_KEY=${SECRET_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
       # Redis connection (for future ConversationState)
       - REDIS_URL=redis://redis:6379/0
       - INTERNAL_DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/sequelspeak
