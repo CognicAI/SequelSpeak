@@ -7,8 +7,6 @@ services:
       dockerfile: Dockerfile
     container_name: sequelspeak-migrate
     command: alembic upgrade head
-    env_file:
-      - .env.docker
     environment:
       - INTERNAL_DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/sequelspeak
     depends_on:
@@ -26,8 +24,6 @@ services:
     container_name: sequelspeak-backend
     ports:
       - "8000:8000"
-    env_file:
-      - .env.docker
     environment:
       # Redis connection (for future ConversationState)
       - REDIS_URL=redis://redis:6379/0
@@ -81,8 +77,6 @@ services:
         # Clerk Publishable Key (needed at build time for frontend)
         VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
     container_name: sequelspeak-frontend
-    env_file:
-      - .env.docker
     ports:
       - "80:80"
     depends_on:
