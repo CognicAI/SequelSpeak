@@ -11,7 +11,7 @@
 import type { TestConnectionSuccessResponse } from '../../types/api';
 import type { ConnectionProfile, ProfileCreateRequest, ProfileUpdateRequest } from '../../types/profile';
 import type { QueryStartRequest, QueryStartResponse } from '../../types/query';
-import type { QueryStatusResponse, QueryRespondRequest, QueryRespondResponse } from '../../types/conversation';
+import type { QueryRespondRequest, QueryRespondResponse } from '../../types/conversation';
 import { ApiError } from './errors';
 
 class ApiClient {
@@ -163,25 +163,6 @@ class ApiClient {
             body: JSON.stringify(payload),
             signal,
         });
-    }
-
-    /**
-     * Polls the current state of a conversation.
-     * GET /api/v1/query/status/{conversationId}
-     */
-    async getConversationStatus(
-        conversationId: string,
-        token: string,
-        signal?: AbortSignal,
-    ): Promise<QueryStatusResponse> {
-        return this.request<QueryStatusResponse>(
-            `/api/v1/query/status/${encodeURIComponent(conversationId)}`,
-            {
-                method: 'GET',
-                headers: { Authorization: `Bearer ${token}` },
-                signal,
-            },
-        );
     }
 
     /**

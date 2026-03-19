@@ -27,6 +27,20 @@ export function ConnectionStatusBanner({
 }: ConnectionStatusBannerProps) {
     const [isVisible, setIsVisible] = useState(false);
     const [displayStatus, setDisplayStatus] = useState<ConnectionStatus>(status);
+    const [prevStatus, setPrevStatus] = useState<ConnectionStatus>(status);
+
+    if (status !== prevStatus) {
+        setPrevStatus(status);
+        if (status === 'disconnected') {
+            setDisplayStatus('disconnected');
+            setIsVisible(true);
+        } else if (status === 'connected') {
+            setDisplayStatus('connected');
+            setIsVisible(true);
+        } else {
+            setIsVisible(false);
+        }
+    }
 
     // Store callback in ref to avoid timer resets on parent re-renders
     const onDismissRef = useRef(onDismiss);
@@ -35,21 +49,13 @@ export function ConnectionStatusBanner({
     }, [onDismiss]);
 
     useEffect(() => {
-        if (status === 'disconnected') {
-            setDisplayStatus('disconnected');
-            setIsVisible(true);
-        } else if (status === 'connected') {
-            setDisplayStatus('connected');
-            setIsVisible(true);
+        if (status === 'connected') {
             // Auto-dismiss after delay
             const timer = setTimeout(() => {
                 setIsVisible(false);
                 onDismissRef.current?.();
             }, autoDismissDelay);
             return () => clearTimeout(timer);
-        } else {
-            // 'unknown' - hide the banner
-            setIsVisible(false);
         }
         return undefined;
     }, [status, autoDismissDelay]);

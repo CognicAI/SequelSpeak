@@ -123,7 +123,9 @@ export function ConversationMessage({ message, isProcessing = false }: Conversat
                                             </div>
                                         );
                                     }
-                                } catch {}
+                                } catch {
+                                    // ignore parse errors
+                                }
                                 return <span>No result rows.</span>;
                             })()}
                         </div>

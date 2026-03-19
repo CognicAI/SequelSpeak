@@ -225,7 +225,24 @@ class TestRequestStatePropagation:
         When a valid conversation_id is supplied, the same ID is echoed back
         in the response (confirms propagation of provided ID, not a fresh one).
         """
-        existing_id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+        from services.conversation_state import conversation_state_manager
+        from schemas.conversation import ConversationStatus
+        
+        # First create a conversation
+        response1 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Initial query"},
+        )
+        assert response1.status_code == 200
+        existing_id = response1.json()["conversation_id"]
+        
+        # Mark as COMPLETE so a new turn can start
+        state = await conversation_state_manager.get_state(existing_id)
+        assert state is not None
+        state.status = ConversationStatus.COMPLETE
+        await conversation_state_manager.save_state(state)
+        
+        # Now send a follow-up
         payload = {
             "query": "Follow-up question",
             "conversation_id": existing_id

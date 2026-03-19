@@ -30,7 +30,7 @@ function makeMockAdapter(initial: ConnectionProfile[] = []): ProfileAdapter {
     const store = [...initial];
     return {
         getProfiles: async () => store,
-        getProfileById: async (id: string, _token: string) => store.find(p => p.id === id),
+        getProfileById: async (id: string) => store.find(p => p.id === id),
     };
 }
 

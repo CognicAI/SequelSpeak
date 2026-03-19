@@ -153,6 +153,10 @@ class TestRouterStatePersistenceIntegration:
         assert state1 is not None
         initial_timestamp = state1.session_start_time
         
+        # Mark as COMPLETE so a new turn can start (state machine validation)
+        state1.status = ConversationStatus.COMPLETE
+        await conversation_state_manager.save_state(state1)
+        
         # Second query with same conversation_id (simulate multi-turn)
         response2 = await client.post(
             "/api/v1/query/start",
@@ -193,6 +197,12 @@ class TestRouterStatePersistenceIntegration:
         )
         
         conversation_id = response1.json()["conversation_id"]
+        
+        # Mark as COMPLETE so a new turn can start (state machine validation)
+        state = await conversation_state_manager.get_state(conversation_id)
+        assert state is not None
+        state.status = ConversationStatus.COMPLETE
+        await conversation_state_manager.save_state(state)
         
         # Second query with updated context (different session_id)
         response2 = await client.post(
@@ -289,7 +299,7 @@ class TestStatePersistenceFields:
         
         # Query fields
         assert state.original_nl_query == "Test query"
-        assert state.current_nl_query is None  # Not set yet
+        assert state.current_nl_query == "Test query"  # Now set by start_new_turn()
         
         # Parameter resolution
         assert isinstance(state.resolved_parameters, dict)

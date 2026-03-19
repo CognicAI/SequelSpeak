@@ -7,7 +7,7 @@ the Router request schema. This is the entry point for all query requests.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 from fastapi import APIRouter, status, Request, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -23,6 +23,7 @@ from schemas.router import (
 )
 from services.conversation_state import conversation_state_manager, ConversationState
 from services.router_service import get_router_service
+from schemas.conversation import InvalidStateTransition, QueryType
 from services.orchestrator import get_orchestrator_service
 from utils.auth import verify_clerk_token
 from utils.security import sanitize_user_context_for_log
@@ -104,6 +105,60 @@ def _build_status_payload(state: ConversationState) -> dict[str, Any]:
         "persona_trace": _to_persona_trace(state.persona_trace or []),
     }
     return payload
+
+
+def _state_owner_user_id(state: ConversationState) -> Optional[str]:
+    """Extract conversation owner user_id from persisted state metadata."""
+    user_context = state.metadata.get("user_context", {})
+    user_id = user_context.get("user_id")
+    return str(user_id) if user_id is not None else None
+
+
+def _assert_conversation_owner(state: ConversationState, user_id: str, conversation_id: str) -> None:
+    """Ensure only the conversation owner can access or mutate a conversation."""
+    owner_user_id = _state_owner_user_id(state)
+    if owner_user_id is None or owner_user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Conversation '{conversation_id}' is not accessible by this user.",
+        )
+
+
+def build_router_context(
+    state: ConversationState,
+    query_type: QueryType = QueryType.NEW,
+) -> dict[str, Any]:
+    """
+    Build compact multi-turn context payload for Router consumption.
+    
+    Computed on-the-fly from state.turns (never persisted).
+    Context is gated by query_type:
+      - FOLLOW_UP: include last 3 turns for continuity
+      - NEW: empty history (no noise from unrelated prior turns)
+    """
+    # Gate context by query type
+    if query_type == QueryType.NEW:
+        relevant_turns: list[dict[str, Any]] = []
+    else:
+        # FOLLOW_UP / CLARIFICATION_RESPONSE: include recent turns
+        relevant_turns = list(state.turns[-3:]) if state.turns else []
+    
+    last_successful_query: Optional[str] = None
+    last_sql: Optional[str] = None
+    for turn in reversed(relevant_turns):
+        if turn.get('status') == 'complete':
+            q = turn.get('original_query')
+            s = turn.get('generated_sql')
+            last_successful_query = str(q) if isinstance(q, str) else None
+            last_sql = str(s) if isinstance(s, str) else None
+            break
+    
+    return {
+        'previous_queries': relevant_turns,
+        'last_successful_query': last_successful_query,
+        'last_sql': last_sql,
+        'clarification_history': list(state.clarification_history or []),
+    }
 
 
 def map_validation_error_to_router_error(validation_error: ValidationError) -> tuple[RouterErrorCode, str]:
@@ -252,37 +307,78 @@ async def initialize_query(
     existing_state = None
     if payload.conversation_id:
         existing_state = await conversation_state_manager.get_state(payload.conversation_id)
+        if existing_state is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation '{payload.conversation_id}' not found or has expired.",
+            )
+
+        _assert_conversation_owner(existing_state, user_id, payload.conversation_id)
     
+    should_enqueue = False
+
     if existing_state:
-        # Existing conversation - merge user context
+        # ── Existing conversation ──────────────────────────────────────
         conversation_id = existing_state.conversation_id
-        existing_ctx = existing_state.metadata.get("user_context", {})
-        merged_ctx: dict[str, Any] = {
-            **existing_ctx,
-            **{k: v for k, v in user_context_dict.items() if v is not None},
-        }
         
-        # Update metadata only (preserve existing state fields)
-        await conversation_state_manager.upsert_state(
-            conversation_id,
-            metadata={'user_context': merged_ctx, 'correlation_id': correlation_id}
-        )
+        # Deep-merge user context (Issue #10)
+        existing_ctx = existing_state.metadata.get("user_context", {})
+        new_ctx = {k: v for k, v in user_context_dict.items() if v is not None}
+        merged_ctx: dict[str, Any] = ConversationState._deep_merge(existing_ctx, new_ctx)
+        existing_state.metadata["user_context"] = merged_ctx
+        existing_state.metadata["correlation_id"] = correlation_id
+        
+        # Block if already processing or awaiting clarification
+        from schemas.conversation import ConversationStatus, ExecutionStage
+        if existing_state.status == ConversationStatus.PROCESSING:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Query already in progress. Please wait or cancel.",
+            )
+        if existing_state.status == ConversationStatus.CLARIFICATION_NEEDED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Conversation '{existing_state.conversation_id}' is awaiting clarification. "
+                    "Use /api/v1/query/respond to continue."
+                ),
+            )
+        
+        # Validate state transition (Issue #6)
+        try:
+            existing_state.transition_status(ConversationStatus.PROCESSING)
+        except InvalidStateTransition as e:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(e),
+            )
+        
+        # Classify query and start new turn (Issues #1, #2, #5)
+        query_type = router_service.classify_query(payload.query, existing_state)
+        existing_state.start_new_turn(payload.query, query_type)
+        existing_state.current_stage = ExecutionStage.PLANNING
+        
+        should_enqueue = True
+        existing_state.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        await conversation_state_manager.save_state(existing_state)
     else:
-        # New conversation - initialize with RouterService
+        # ── New conversation ───────────────────────────────────────────
         state = await router_service.initialize_conversation(
             query=payload.query,
-            conversation_id=payload.conversation_id,
+            conversation_id=None,
             user_context=user_context_dict,
             correlation_id=correlation_id,
         )
         conversation_id = state.conversation_id
+        await conversation_state_manager.save_state(state)
         merged_ctx = user_context_dict
+        should_enqueue = True
 
-    # Attach conversation_id and user_context to request.state for downstream propagation
+    # Attach to request.state for downstream propagation
     request.state.conversation_id = conversation_id
     request.state.user_context = merged_ctx
 
-    # Store database_id in conversation metadata (needed by orchestrator for DB queries)
+    # Store database_id in conversation metadata
     if payload.database_id:
         state_to_update = await conversation_state_manager.get_state(conversation_id)
         if state_to_update:
@@ -290,7 +386,6 @@ async def initialize_query(
             state_to_update.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             await conversation_state_manager.save_state(state_to_update)
 
-    # Log safe (non-sensitive) metadata only — ip_address is intentionally excluded.
     safe_ctx = sanitize_user_context_for_log(merged_ctx)
     logger.info(
         f"Conversation initialized: conversation_id={conversation_id}, user_context={safe_ctx}",
@@ -305,17 +400,12 @@ async def initialize_query(
         message="Query initialized successfully"
     )
     
-    
     logger.info(
         f"Query initialized: conversation_id={conversation_id}",
         extra={'extra_fields': {'correlation_id': correlation_id}}
     )
 
-    # Kick off persona pipeline as a background task so the HTTP response
-    # is returned immediately and the client can start polling /status/{id}.
-    # Only launch for new conversations — resuming after clarification is
-    # handled via POST /respond which updates state directly.
-    if not existing_state:
+    if should_enqueue:
         orchestrator = get_orchestrator_service()
         background_tasks.add_task(orchestrator.execute_conversation, conversation_id)
         logger.info(
@@ -351,13 +441,14 @@ Returns 404 if the conversation_id is not found (expired TTL or invalid ID).
 )
 async def get_conversation_status(
     conversation_id: str,
-    _user_claims: Dict[str, Any] = Depends(verify_clerk_token),
+    user_claims: Dict[str, Any] = Depends(verify_clerk_token),
 ) -> QueryStatusResponse:
     """
     Return the current state of a conversation by ID.
 
     Used by the frontend polling loop to drive UI state transitions.
     """
+    user_id = str(user_claims.get("sub", "unknown"))
     state = await conversation_state_manager.get_state(conversation_id)
 
     if state is None:
@@ -365,6 +456,8 @@ async def get_conversation_status(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation '{conversation_id}' not found or has expired.",
         )
+
+    _assert_conversation_owner(state, user_id, conversation_id)
 
     logger.debug(
         f"Status polled: conversation_id={conversation_id}, "
@@ -394,21 +487,10 @@ Token is passed via query parameter (e.g. ?access_token=...) because EventSource
 async def stream_conversation_status(
     conversation_id: str,
     access_token: str = "",
+    user_claims: Dict[str, Any] = Depends(verify_clerk_token),
 ) -> StreamingResponse:
     """Stream conversation state updates using Server-Sent Events."""
-    
-    # 1. Validate token from query param (cannot use custom headers in standard EventSource)
-    # Re-use verify_clerk_token logic, simulating a bearer token in request headers.
-    # If using clerk, verify_clerk_token usually expects an Authorization header or it extracts it via a dependency.
-    # To keep it simple, we wrap it manually or bypass it if we're building internal logic, 
-    # but let's check how verify_clerk_token works. For now, since verify_clerk_token expects Request header,
-    # let's construct a mock or let's assume we do direct validation if needed.
-    
-    # Due to EventSource limitations, frontend passes `access_token` query param.
-    # In a full clerk implementation, we would decode this jwt manually here.
-    if not access_token:
-        # In actual prod, require token validation
-        pass
+    user_id = str(user_claims.get("sub", "unknown"))
 
     import json
     from schemas.conversation import ConversationStatus
@@ -421,6 +503,8 @@ async def stream_conversation_status(
         if not state:
             yield f"event: error\ndata: {json.dumps({'detail': 'Conversation not found'})}\n\n"
             return
+
+        _assert_conversation_owner(state, user_id, conversation_id)
             
         def build_event(st: 'ConversationState') -> str:
             payload = _build_status_payload(st)
@@ -481,12 +565,17 @@ set to False. The conversation status transitions back to `processing`.
 async def respond_to_clarification(
     payload: QueryRespondRequest,
     background_tasks: BackgroundTasks,
-    _user_claims: Dict[str, Any] = Depends(verify_clerk_token),
+    user_claims: Dict[str, Any] = Depends(verify_clerk_token),
 ) -> QueryRespondResponse:
     """
     Record clarification answers and transition conversation back to processing.
+    
+    Validates answer count matches pending questions (Issue #7),
+    refines current_nl_query from Q&A (Issue #3), and uses
+    validated state transition (Issue #6).
     """
-    from schemas.conversation import ConversationStatus, ClarificationQuestion
+    from schemas.conversation import ConversationStatus, ClarificationQuestion, ExecutionStage
+    user_id = str(user_claims.get("sub", "unknown"))
 
     state = await conversation_state_manager.get_state(payload.conversation_id)
 
@@ -495,6 +584,8 @@ async def respond_to_clarification(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation '{payload.conversation_id}' not found or has expired.",
         )
+
+    _assert_conversation_owner(state, user_id, payload.conversation_id)
 
     if state.status != ConversationStatus.CLARIFICATION_NEEDED:
         raise HTTPException(
@@ -505,41 +596,67 @@ async def respond_to_clarification(
             ),
         )
 
+    # ── Validate answer count (Issue #7) ───────────────────────────
+    pending_count = len(state.pending_clarification_questions)
+    answer_count = len(payload.answers)
+    # Allow free-form message as fallback for all questions
+    if answer_count == 0 and payload.message:
+        # Single message used as answer for all questions
+        pass
+    elif answer_count != pending_count and answer_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Answer count mismatch: got {answer_count} answers "
+                f"but {pending_count} questions are pending. "
+                f"Provide exactly {pending_count} answers or use the 'message' field."
+            ),
+        )
+
     now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
-    # Append answers to clarification history
+    # Build Q&A pairs and append to clarification history
+    q_and_a_pairs: list[dict[str, str]] = []
     for i, question in enumerate(state.pending_clarification_questions):
         answer_text = payload.answers[i] if i < len(payload.answers) else ""
-        # If a single message was given instead of per-question answers, use that
         if not answer_text and payload.message:
             answer_text = payload.message
+        q_and_a_pairs.append({'question': question, 'answer': answer_text})
         state.clarification_history.append(ClarificationQuestion(
             question=question,
             answer=answer_text,
             timestamp=now,
         ).model_dump())
 
-    # Clear pending questions and resume
+    # ── Refine query from Q&A (Issue #3) ───────────────────────────
+    state.refine_query_after_clarification(q_and_a_pairs)
+
+    # ── Validated status transition (Issue #6) ─────────────────────
     state.pending_clarification_questions = []
     state.awaiting_user_response = False
-    state.status = ConversationStatus.PROCESSING
+    try:
+        state.transition_status(ConversationStatus.PROCESSING)
+    except InvalidStateTransition as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+    state.current_stage = ExecutionStage.PLANNING
 
-    # Optionally update database_id in metadata
     if payload.database_id:
         state.metadata["database_id"] = payload.database_id
 
     state.updated_at = now
-
     await conversation_state_manager.save_state(state)
 
     logger.info(
         f"Clarification answered: conversation_id={state.conversation_id}, "
-        f"answers_count={len(payload.answers)}"
+        f"answers_count={len(payload.answers)}, "
+        f"refined_query='{(state.current_nl_query or '')[:80]}'"
     )
 
-    # Re-launch the orchestrator pipeline so it can continue from where it paused.
-    # The orchestrator will see the cleared pending_clarification_questions and
-    # pick up from the next stage in PIPELINE.
+    # Re-launch orchestrator — will resume from PLANNING
+    # (TODO: resume from paused_at_stage when orchestrator supports it)
     orchestrator = get_orchestrator_service()
     background_tasks.add_task(orchestrator.execute_conversation, state.conversation_id)
 

@@ -113,7 +113,7 @@ export function useProfileSelection(options: UseProfileSelectionOptions = {}): U
             setIsLoading(false);
         }
         // Only depends on adapter — removing activeProfileId prevents reload loops (section 2.1)
-    }, [adapter]);
+    }, [adapter, getToken, isSignedIn]);
 
     // Separately handle the case where the active profile is removed from the list.
     // Keeping this in a dedicated effect avoids re-creating loadProfiles on every selection change.

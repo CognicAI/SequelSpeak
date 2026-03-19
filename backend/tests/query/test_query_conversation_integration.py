@@ -11,6 +11,8 @@ import uuid
 
 from main import app
 from services.conversation_state import conversation_state_manager
+from utils.auth import verify_clerk_token
+from schemas.conversation import ConversationStatus, ExecutionStage
 
 
 # ============================================================================
@@ -64,6 +66,12 @@ class TestQueryEndpointWithConversationState:
         response1 = await client.post("/api/v1/query/start", json=payload1)
         conv_id = response1.json()["conversation_id"]
         
+        # Mark as COMPLETE so a new turn can start
+        state = await conversation_state_manager.get_state(conv_id)
+        assert state is not None
+        state.status = ConversationStatus.COMPLETE
+        await conversation_state_manager.save_state(state)
+        
         # Second query with same conversation_id
         payload2 = {
             "query": "SELECT * FROM orders",
@@ -76,6 +84,95 @@ class TestQueryEndpointWithConversationState:
         
         # Should return the same conversation_id
         assert data2["conversation_id"] == conv_id
+
+    @pytest.mark.asyncio
+    async def test_query_with_unknown_conversation_id_returns_404(self, client):
+        """Provided conversation_id must exist; unknown IDs are rejected."""
+        payload = {
+            "query": "SELECT * FROM users",
+            "conversation_id": "12345678-90ab-4cde-8f01-234567890abc",
+        }
+
+        response = await client.post("/api/v1/query/start", json=payload)
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_start_while_clarification_needed_returns_409(self, client):
+        """/start should fail when conversation is waiting for clarification."""
+        response1 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show users"},
+        )
+        conv_id = response1.json()["conversation_id"]
+
+        state = await conversation_state_manager.get_state(conv_id)
+        assert state is not None
+        state.status = ConversationStatus.CLARIFICATION_NEEDED
+        state.awaiting_user_response = True
+        state.pending_clarification_questions = ["Do you mean active users only?"]
+        await conversation_state_manager.save_state(state)
+
+        response2 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show last 7 days", "conversation_id": conv_id},
+        )
+
+        assert response2.status_code == 409
+        assert "awaiting clarification" in response2.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_start_while_processing_returns_409(self, client):
+        """/start should reject follow-up if the conversation is already processing."""
+        response1 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show users"},
+        )
+        conv_id = response1.json()["conversation_id"]
+
+        state = await conversation_state_manager.get_state(conv_id)
+        assert state is not None
+        state.status = ConversationStatus.PROCESSING
+        state.current_stage = ExecutionStage.EXECUTION
+        await conversation_state_manager.save_state(state)
+
+        response2 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show top customers", "conversation_id": conv_id},
+        )
+
+        assert response2.status_code == 409
+        assert "already in progress" in response2.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_follow_up_appends_turn_history(self, client):
+        """Follow-up turns should preserve prior query context in state.turns."""
+        response1 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show active users"},
+        )
+        conv_id = response1.json()["conversation_id"]
+
+        # Mark first turn as complete so second can start
+        state1 = await conversation_state_manager.get_state(conv_id)
+        assert state1 is not None
+        state1.generated_sql = "SELECT name FROM users WHERE status='active';"
+        state1.status = ConversationStatus.COMPLETE
+        await conversation_state_manager.save_state(state1)
+
+        response2 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show those from last 7 days", "conversation_id": conv_id},
+        )
+        assert response2.status_code == 200
+
+        state2 = await conversation_state_manager.get_state(conv_id)
+        assert state2 is not None
+        # Turn history now lives in state.turns, not metadata["turn_history"]
+        assert isinstance(state2.turns, list)
+        assert len(state2.turns) >= 1
+        assert state2.turns[-1]["original_query"] == "Show active users"
     
     @pytest.mark.asyncio
     async def test_query_with_user_context_stores_metadata(self, client):
@@ -109,6 +206,12 @@ class TestQueryEndpointWithConversationState:
         
         # Make multiple queries with same conversation_id
         for i in range(5):
+            # Mark previous turn complete before starting new one
+            state = await conversation_state_manager.get_state(conv_id)
+            assert state is not None
+            state.status = ConversationStatus.COMPLETE
+            await conversation_state_manager.save_state(state)
+            
             payload = {
                 "query": f"Query number {i}",
                 "conversation_id": conv_id
@@ -196,6 +299,79 @@ class TestAsyncConversationIntegration:
         stored_context = state.metadata["user_context"]
         assert stored_context["user_id"] == "test-user-id-00000000"
         assert stored_context["session_id"] == "session-abc"
+
+    @pytest.mark.asyncio
+    async def test_status_and_respond_require_conversation_owner(self, client):
+        """Different users must not access or respond to another user's conversation."""
+        create_response = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show me users"},
+        )
+        conv_id = create_response.json()["conversation_id"]
+
+        state = await conversation_state_manager.get_state(conv_id)
+        assert state is not None
+        state.status = ConversationStatus.CLARIFICATION_NEEDED
+        state.awaiting_user_response = True
+        state.pending_clarification_questions = ["All users or active users?"]
+        await conversation_state_manager.save_state(state)
+
+        async def other_user_claims():
+            return {"sub": "another-user-id"}
+
+        app.dependency_overrides[verify_clerk_token] = other_user_claims
+        try:
+            status_response = await client.get(f"/api/v1/query/status/{conv_id}")
+            assert status_response.status_code == 403
+
+            respond_response = await client.post(
+                "/api/v1/query/respond",
+                json={
+                    "conversation_id": conv_id,
+                    "answers": ["active users"],
+                },
+            )
+            assert respond_response.status_code == 403
+        finally:
+            async def default_test_claims():
+                return {"sub": "test-user-id-00000000", "email": "test@example.com"}
+
+            app.dependency_overrides[verify_clerk_token] = default_test_claims
+
+    @pytest.mark.asyncio
+    async def test_respond_resets_stage_to_planning(self, client):
+        """/respond should move status back to processing and stage back to planning."""
+        create_response = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Show users"},
+        )
+        conv_id = create_response.json()["conversation_id"]
+
+        state = await conversation_state_manager.get_state(conv_id)
+        assert state is not None
+        state.status = ConversationStatus.CLARIFICATION_NEEDED
+        state.current_stage = ExecutionStage.CLARIFICATION
+        state.awaiting_user_response = True
+        state.pending_clarification_questions = ["All users or active users?"]
+        await conversation_state_manager.save_state(state)
+
+        respond_response = await client.post(
+            "/api/v1/query/respond",
+            json={
+                "conversation_id": conv_id,
+                "answers": ["active users"],
+            },
+        )
+
+        assert respond_response.status_code == 200
+        response_data = respond_response.json()
+        assert response_data["status"] == ConversationStatus.PROCESSING.value
+        assert response_data["current_stage"] == ExecutionStage.PLANNING.value
+
+        updated_state = await conversation_state_manager.get_state(conv_id)
+        assert updated_state is not None
+        # router_context is no longer persisted — computed on-the-fly
+        assert updated_state.current_nl_query is not None
 
 
 # ============================================================================

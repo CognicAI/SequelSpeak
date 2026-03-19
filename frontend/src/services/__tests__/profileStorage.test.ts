@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { saveProfile, getProfiles, deleteProfile } from '../profileStorage';
 import { apiClient } from '../api/client';
+import type { ConnectionProfile } from '../../types/profile';
 
 vi.mock('../api/client', () => ({
     apiClient: {
@@ -32,7 +33,7 @@ describe('profileStorage', () => {
                 username: 'user',
                 database: 'testdb',
                 createdAt: new Date().toISOString()
-            } as any);
+            } as unknown as ConnectionProfile);
 
             const result = await saveProfile(url, mockToken);
 
@@ -60,8 +61,8 @@ describe('profileStorage', () => {
                 createdAt: new Date().toISOString()
             };
 
-            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([existingProfile] as any);
-            vi.mocked(apiClient.updateProfile).mockResolvedValueOnce(existingProfile as any);
+            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([existingProfile] as unknown as ConnectionProfile[]);
+            vi.mocked(apiClient.updateProfile).mockResolvedValueOnce(existingProfile as unknown as ConnectionProfile);
 
             const result = await saveProfile(url, mockToken);
 
@@ -90,8 +91,8 @@ describe('profileStorage', () => {
                 JSON.stringify([{ id: 'old-id', name: 'migrated', host: 'h', port: '5432', username: 'u', database: 'd' }]),
             );
             
-            vi.mocked(apiClient.createProfile).mockResolvedValueOnce({} as any);
-            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([{ id: 'new-id' }] as any);
+            vi.mocked(apiClient.createProfile).mockResolvedValueOnce({} as unknown as ConnectionProfile);
+            vi.mocked(apiClient.getProfiles).mockResolvedValueOnce([{ id: 'new-id' }] as unknown as ConnectionProfile[]);
 
             const profiles = await getProfiles(mockToken);
             expect(profiles).toHaveLength(1);

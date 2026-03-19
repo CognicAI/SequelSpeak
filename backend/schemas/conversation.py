@@ -7,11 +7,15 @@ Aligned with SRS v2 Section 6.1 (ConversationState schema).
 This module provides:
 - ExecutionStage: Enum for conversation flow stages
 - ConversationStatus: Enum for conversation lifecycle status
+- TurnStatus: Enum for per-turn lifecycle
+- QueryType: Enum for query classification (new / follow_up / clarification_response)
+- ConversationTurn: Per-turn state model
+- ALLOWED_TRANSITIONS: State machine transition rules
 - ConversationStateSchema: Complete state structure for persistence
 """
 
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -61,6 +65,142 @@ class ConversationStatus(str, Enum):
     ERROR = "error"  # Execution failed
     CANCELLED = "cancelled"  # User cancelled
     TIMEOUT = "timeout"  # Conversation expired
+
+
+# ---------------------------------------------------------------------------
+# Turn-level types
+# ---------------------------------------------------------------------------
+
+class TurnStatus(str, Enum):
+    """
+    Lifecycle status of a single conversation turn.
+    
+    A conversation is composed of multiple turns, each with its own lifecycle.
+    """
+    
+    IN_PROGRESS = "in_progress"              # Turn is actively being processed
+    CLARIFICATION_PAUSED = "clarification_paused"  # Waiting for user clarification
+    COMPLETE = "complete"                     # Turn completed successfully
+    ERROR = "error"                           # Turn failed
+
+
+class QueryType(str, Enum):
+    """
+    Classification of a query relative to the conversation history.
+    
+    Used by the Router to decide how much prior context to inject.
+    """
+    
+    NEW = "new"                              # Unrelated to previous turns
+    FOLLOW_UP = "follow_up"                  # Builds on / refines previous turn
+    CLARIFICATION_RESPONSE = "clarification_response"  # Answer to a clarification question
+
+
+class ConversationTurn(BaseModel):
+    """
+    Represents a single turn in a multi-turn conversation.
+    
+    Each turn tracks the user's query (original and refined), its lifecycle,
+    and the results produced by the persona pipeline.
+    
+    Query Field Ownership:
+    - original_query: What the user typed, verbatim. Immutable.
+    - refined_query:  After clarification merging. Set once by refinement logic.
+    """
+    
+    turn_id: str = Field(..., description="UUID v4 identifier for this turn")
+    turn_number: int = Field(..., description="1-indexed sequential turn number")
+    original_query: str = Field(..., description="User's query as submitted (immutable)")
+    refined_query: Optional[str] = Field(
+        default=None,
+        description="Query after clarification merging (None if no clarification)"
+    )
+    query_type: QueryType = Field(
+        default=QueryType.NEW,
+        description="Classification: new, follow_up, or clarification_response"
+    )
+    status: TurnStatus = Field(
+        default=TurnStatus.IN_PROGRESS,
+        description="Current lifecycle status of this turn"
+    )
+    paused_at_stage: Optional[str] = Field(
+        default=None,
+        description="ExecutionStage value where clarification paused this turn"
+    )
+    generated_sql: Optional[str] = Field(default=None, description="SQL produced this turn")
+    execution_result: Optional[Dict[str, Any]] = Field(
+        default=None, description="Query results from this turn"
+    )
+    explanation: Optional[str] = Field(default=None, description="Explanation from this turn")
+    started_at: str = Field(..., description="ISO 8601 timestamp when turn started")
+    completed_at: Optional[str] = Field(
+        default=None, description="ISO 8601 timestamp when turn finished"
+    )
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "turn_id": "f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b",
+                "turn_number": 1,
+                "original_query": "Show sales from last month",
+                "refined_query": None,
+                "query_type": "new",
+                "status": "complete",
+                "paused_at_stage": None,
+                "generated_sql": "SELECT * FROM sales WHERE ...",
+                "execution_result": {"rows": [], "row_count": 0},
+                "explanation": "Your query returned 0 rows.",
+                "started_at": "2026-03-05T10:30:00Z",
+                "completed_at": "2026-03-05T10:30:12Z",
+            }
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# State machine: allowed status transitions
+# ---------------------------------------------------------------------------
+
+ALLOWED_TRANSITIONS: Dict[ConversationStatus, Set[ConversationStatus]] = {
+    ConversationStatus.PROCESSING: {
+        ConversationStatus.COMPLETE,
+        ConversationStatus.ERROR,
+        ConversationStatus.CLARIFICATION_NEEDED,
+        ConversationStatus.CANCELLED,
+        ConversationStatus.TIMEOUT,
+        ConversationStatus.PROCESSING,  # same-turn retry (SQL validation loop)
+    },
+    ConversationStatus.CLARIFICATION_NEEDED: {
+        ConversationStatus.PROCESSING,
+        ConversationStatus.CANCELLED,
+        ConversationStatus.TIMEOUT,
+    },
+    ConversationStatus.COMPLETE: {
+        ConversationStatus.PROCESSING,  # new turn
+    },
+    ConversationStatus.ERROR: {
+        ConversationStatus.PROCESSING,  # retry / new turn
+    },
+    ConversationStatus.CANCELLED: set(),  # terminal
+    ConversationStatus.TIMEOUT: set(),    # terminal
+}
+
+# Maximum number of completed turns retained in state. Older turns evicted FIFO.
+MAX_TURNS = 20
+
+
+class InvalidStateTransition(Exception):
+    """Raised when a status transition violates the state machine rules."""
+    
+    def __init__(self, current: ConversationStatus, target: ConversationStatus):
+        self.current = current
+        self.target = target
+        allowed = ALLOWED_TRANSITIONS.get(current, set())
+        allowed_str = ', '.join([s.value for s in allowed]) if allowed else 'none (terminal)'
+        super().__init__(
+            f"Invalid state transition: {current.value} → {target.value}. "
+            f"Allowed targets from {current.value}: {allowed_str}"
+        )
 
 
 class ClarificationQuestion(BaseModel):
@@ -228,6 +368,20 @@ class ConversationStateSchema(BaseModel):
     
     # ===== Metadata Fields =====
     updated_at: str = Field(..., description="ISO 8601 timestamp of last update")
+    
+    # ===== Turn Tracking Fields (multi-turn support) =====
+    current_turn_id: Optional[str] = Field(
+        default=None,
+        description="UUID v4 of the active turn (None before first turn starts)"
+    )
+    turn_number: int = Field(
+        default=0,
+        description="Current turn number (0 = no turns started yet)"
+    )
+    turns: List[Dict[str, Any]] = Field(
+        default_factory=lambda: [],
+        description="Completed turn snapshots (capped at MAX_TURNS, FIFO eviction)"
+    )
     
     model_config = ConfigDict(
         json_schema_extra={

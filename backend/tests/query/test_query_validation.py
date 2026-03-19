@@ -28,19 +28,36 @@ class TestQueryValidationEndpoint:
     
     @pytest.mark.asyncio
     async def test_valid_request_with_conversation_id(self, client):
-        """Test valid request with conversation ID."""
+        """Test valid request with an existing conversation ID."""
+        # First create a conversation
+        response1 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Initial query"},
+        )
+        assert response1.status_code == 200
+        conv_id = response1.json()["conversation_id"]
+        
+        # Mark as COMPLETE so a new turn can start
+        from services.conversation_state import conversation_state_manager
+        from schemas.conversation import ConversationStatus
+        state = await conversation_state_manager.get_state(conv_id)
+        assert state is not None
+        state.status = ConversationStatus.COMPLETE
+        await conversation_state_manager.save_state(state)
+        
+        # Now send a follow-up with the conversation_id
         response = await client.post(
             "/api/v1/query/start",
             json={
                 "query": "Show me sales from last month",
-                "conversation_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+                "conversation_id": conv_id,
             }
         )
         
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
-        assert data["conversation_id"] == "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+        assert data["conversation_id"] == conv_id
         assert data["query"] == "Show me sales from last month"
         assert "timestamp" in data
         assert "correlation_id" in data
@@ -227,18 +244,35 @@ class TestQueryValidationEndpoint:
     @pytest.mark.asyncio
     async def test_conversation_id_case_insensitive(self, client):
         """Test that conversation ID is case-insensitive and normalized."""
+        # First create a conversation
+        response1 = await client.post(
+            "/api/v1/query/start",
+            json={"query": "Initial query"},
+        )
+        assert response1.status_code == 200
+        conv_id = response1.json()["conversation_id"]
+        
+        # Mark as COMPLETE so a new turn can start
+        from services.conversation_state import conversation_state_manager
+        from schemas.conversation import ConversationStatus
+        state = await conversation_state_manager.get_state(conv_id)
+        assert state is not None
+        state.status = ConversationStatus.COMPLETE
+        await conversation_state_manager.save_state(state)
+        
+        # Send the uppercase version
         response = await client.post(
             "/api/v1/query/start",
             json={
                 "query": "test query",
-                "conversation_id": "A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D"
+                "conversation_id": conv_id.upper(),
             }
         )
         
         assert response.status_code == 200
         data = response.json()
         # Should be normalized to lowercase
-        assert data["conversation_id"] == "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+        assert data["conversation_id"] == conv_id.lower()
     
     @pytest.mark.asyncio
     async def test_correlation_id_included_in_response(self, client):

@@ -29,9 +29,8 @@ import re
 import time
 from datetime import datetime, timezone
 from typing import Optional, Any
-
-from schemas.conversation import ExecutionStage, ConversationStatus
-from services.conversation_state import ConversationStateManager, ConversationState
+from schemas.conversation import ExecutionStage, ConversationStatus  # type: ignore
+from services.conversation_state import ConversationStateManager, ConversationState  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +151,13 @@ class OrchestratorService:
             return
         
         state: ConversationState = raw_state
+        assert state is not None
 
         user_id = state.metadata.get("user_context", {}).get("user_id", "unknown")
-        query_text = state.original_nl_query if state.original_nl_query else "unknown"
+        current_query = state.current_nl_query or "unknown"
         logger.info(
             f"Orchestrator pipeline: conversation_id={conversation_id}, user_id={user_id}, "
-            f"query='{query_text[:80]}'"
+            f"query='{current_query[:80]}'"
         )
 
         # --- Phase 1: Planning ---
@@ -315,6 +315,8 @@ class OrchestratorService:
         if state is None:
             logger.warning(f"Orchestrator: conversation {conversation_id} vanished — stopping")
             return True
+        
+        assert state is not None
         if state.status in (
             ConversationStatus.COMPLETE,
             ConversationStatus.ERROR,
@@ -344,7 +346,7 @@ class OrchestratorService:
         await asyncio.sleep(STAGE_DELAY[ExecutionStage.PLANNING])
         elapsed = time.perf_counter() - t0
 
-        query = state.original_nl_query or ""
+        query = state.current_nl_query or ""
         user_id = state.metadata.get("user_context", {}).get("user_id", "unknown")
 
         logger.info(
@@ -404,7 +406,7 @@ class OrchestratorService:
         await asyncio.sleep(STAGE_DELAY[ExecutionStage.SQL_GENERATION])
         elapsed = time.perf_counter() - t0
 
-        query = state.original_nl_query
+        query = state.current_nl_query
         # Stub SQL — the comment includes the attempt number so retries are visible
         stub_sql = (
             f"SELECT *\nFROM stub_table\nWHERE -- stub: {query}"
@@ -412,9 +414,11 @@ class OrchestratorService:
         )
 
         logger.info(
-            f"[SQLWriter] Generated SQL (attempt {attempt + 1}): "
-            f"sql='{stub_sql[:120]}', elapsed={elapsed:.2f}s "
-            f"(conversation_id={state.conversation_id})"
+            "[SQLWriter] Generated SQL (attempt %d): sql='%s...', elapsed=%.2fs (conversation_id=%s)",
+            attempt + 1,
+            stub_sql[:120],  # type: ignore[no-matching-overload]
+            elapsed,
+            state.conversation_id
         )
         return StageResult(
             StageResult.CONTINUE,
@@ -479,9 +483,11 @@ class OrchestratorService:
         stub_result: dict[str, Any] = {"rows": [], "row_count": 0, "columns": [], "execution_time_ms": round(elapsed * 1000)}
 
         logger.info(
-            f"[Executor] Executed: sql='{target_sql[:80]}', "
-            f"rows={stub_result['row_count']}, time={elapsed:.2f}s "
-            f"(conversation_id={state.conversation_id})"
+            "[Executor] Executed: sql='%s...', rows=%d, time=%.2fs (conversation_id=%s)",
+            target_sql[:80],  # type: ignore[no-matching-overload]
+            stub_result['row_count'],
+            elapsed,
+            state.conversation_id
         )
         return StageResult(
             StageResult.CONTINUE,
@@ -602,11 +608,14 @@ class OrchestratorService:
         state.status = ConversationStatus.CLARIFICATION_NEEDED
         state.awaiting_user_response = True
         state.pending_clarification_questions = questions
+        # Record which stage we paused at for potential resume
+        state.metadata['_paused_at_stage'] = state.current_stage.value
         state.updated_at = self._now()
         await self.state_manager.save_state(state)
         logger.info(
             f"[Orchestrator] Paused for clarification: "
-            f"questions={questions} (conversation_id={state.conversation_id})"
+            f"questions={questions}, paused_at={state.current_stage.value} "
+            f"(conversation_id={state.conversation_id})"
         )
 
     async def _handle_terminal(
@@ -636,12 +645,16 @@ class OrchestratorService:
             state.explanation = result.explanation
         if result.visualization_config is not None:
             state.visualization_config = result.visualization_config
-        state.updated_at = self._now()
+        # Mark current turn as complete
+        now = self._now()
+        state.metadata['_turn_completed_at'] = now
+        state.updated_at = now
         await self.state_manager.save_state(state)
         user_id = state.metadata.get("user_context", {}).get("user_id", "unknown")
         logger.info(
             f"Orchestrator: COMPLETE — conversation_id={state.conversation_id}, "
-            f"user_id={user_id}, sql='{(state.generated_sql or '')[:80]}', "
+            f"user_id={user_id}, turn={state.turn_number}, "
+            f"sql='{(state.generated_sql or '')[:80]}', "
             f"explanation='{(state.explanation or '')[:80]}'"
         )
 
@@ -652,11 +665,15 @@ class OrchestratorService:
             return
         state.status = ConversationStatus.ERROR
         state.current_stage = ExecutionStage.ERROR
-        state.updated_at = self._now()
-        state.errors.append({"message": message, "timestamp": self._now()})
+        now = self._now()
+        state.updated_at = now
+        state.errors.append({"message": message, "timestamp": now})
+        # Mark current turn as error
+        state.metadata['_turn_error'] = True
         await self.state_manager.save_state(state)
         logger.error(
-            f"Orchestrator: ERROR — conversation_id={conversation_id}: {message}"
+            f"Orchestrator: ERROR — conversation_id={conversation_id}, "
+            f"turn={state.turn_number}: {message}"
         )
 
     @staticmethod

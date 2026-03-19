@@ -38,6 +38,12 @@ from config import settings
 from schemas.conversation import (
     ExecutionStage,
     ConversationStatus,
+    TurnStatus,
+    QueryType,
+    ConversationTurn,
+    ALLOWED_TRANSITIONS,
+    MAX_TURNS,
+    InvalidStateTransition,
 )
 
 
@@ -101,6 +107,10 @@ class ConversationState:
         errors: Optional[List[Dict[str, Any]]] = None,
         updated_at: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        # Turn tracking fields
+        current_turn_id: Optional[str] = None,
+        turn_number: int = 0,
+        turns: Optional[List[Dict[str, Any]]] = None,
         # Legacy fields for backward compatibility
         created_at: Optional[str] = None,
     ):
@@ -110,8 +120,8 @@ class ConversationState:
         Args:
             conversation_id: UUID v4 conversation ID
             session_start_time: ISO 8601 creation timestamp (auto-generated if None)
-            original_nl_query: User's original query
-            current_nl_query: Refined query after clarification
+            original_nl_query: User's original query (immutable conversation identity)
+            current_nl_query: Active query for pipeline execution (updated per turn)
             resolved_parameters: Resolved query parameters
             pending_clarification_questions: Questions awaiting response
             clarification_history: Q&A pairs
@@ -128,6 +138,9 @@ class ConversationState:
             errors: Error records
             updated_at: Last update timestamp (auto-generated if None)
             metadata: Additional metadata
+            current_turn_id: UUID v4 of the active turn
+            turn_number: Current turn number (0 = no turns started)
+            turns: Completed turn snapshots (capped at MAX_TURNS)
             created_at: Legacy field, maps to session_start_time
         """
         self.conversation_id = conversation_id
@@ -137,6 +150,8 @@ class ConversationState:
         self.session_start_time = session_start_time or created_at or now
         
         # Query fields
+        # original_nl_query: immutable — first-ever query for conversation identity
+        # current_nl_query: mutable — the query the pipeline should execute RIGHT NOW
         self.original_nl_query = original_nl_query
         self.current_nl_query = current_nl_query
         
@@ -167,12 +182,213 @@ class ConversationState:
         # Metadata
         self.updated_at = updated_at or now
         self.metadata = metadata or {}
+        
+        # Turn tracking
+        self.current_turn_id = current_turn_id
+        self.turn_number = turn_number
+        self.turns: List[Dict[str, Any]] = turns or []
     
     # Legacy property for backward compatibility
     @property
     def created_at(self) -> str:
         """Backward compatibility: created_at maps to session_start_time."""
         return self.session_start_time
+    
+    # ------------------------------------------------------------------
+    # Turn management
+    # ------------------------------------------------------------------
+    
+    def start_new_turn(
+        self,
+        query: str,
+        query_type: QueryType = QueryType.NEW,
+    ) -> ConversationTurn:
+        """
+        Start a new turn in this conversation.
+        
+        1. Snapshots the current turn (if any) into self.turns[]
+        2. Evicts oldest turns beyond MAX_TURNS
+        3. Creates a fresh ConversationTurn
+        4. Resets per-turn execution state
+        5. Updates current_nl_query (original_nl_query stays immutable)
+        
+        Args:
+            query: The user's new query text
+            query_type: Classification of the query
+        
+        Returns:
+            The newly created ConversationTurn
+        """
+        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        
+        # Snapshot current turn if it exists and is finished
+        if self.current_turn_id and self.turn_number > 0:
+            snapshot = {
+                'turn_id': self.current_turn_id,
+                'turn_number': self.turn_number,
+                'original_query': self.current_nl_query or self.original_nl_query or '',
+                'refined_query': None,
+                'query_type': query_type.value,  # previous turn's type
+                'status': TurnStatus.COMPLETE.value,
+                'paused_at_stage': None,
+                'generated_sql': self.generated_sql,
+                'execution_result': self.execution_result,
+                'explanation': self.explanation,
+                'started_at': self.metadata.get('_turn_started_at', now),
+                'completed_at': now,
+            }
+            self.turns.append(snapshot)
+            # FIFO eviction
+            if len(self.turns) > MAX_TURNS:
+                self.turns = self.turns[-MAX_TURNS:]
+        
+        # Increment turn
+        self.turn_number += 1
+        new_turn_id = str(uuid.uuid4())
+        self.current_turn_id = new_turn_id
+        
+        # Update query fields
+        # original_nl_query stays immutable — only set on first turn
+        if self.original_nl_query is None:
+            self.original_nl_query = query
+        self.current_nl_query = query
+        
+        # Reset per-turn execution state
+        self.generated_sql = None
+        self.execution_result = None
+        self.explanation = None
+        self.errors = []
+        self.completed_stages = []
+        self.persona_trace = []
+        self.awaiting_user_response = False
+        self.pending_clarification_questions = []
+        
+        # Store turn start time in metadata for snapshot
+        self.metadata['_turn_started_at'] = now
+        
+        # Create the turn model
+        turn = ConversationTurn(
+            turn_id=new_turn_id,
+            turn_number=self.turn_number,
+            original_query=query,
+            query_type=query_type,
+            status=TurnStatus.IN_PROGRESS,
+            started_at=now,
+        )
+        
+        self.updated_at = now
+        return turn
+    
+    def transition_status(self, new_status: ConversationStatus) -> None:
+        """
+        Transition to a new conversation status with validation.
+        
+        Raises InvalidStateTransition if the transition is not allowed
+        by the state machine rules.
+        
+        Args:
+            new_status: Target ConversationStatus
+        
+        Raises:
+            InvalidStateTransition: If transition is illegal
+        """
+        allowed = ALLOWED_TRANSITIONS.get(self.status, set())
+        if new_status not in allowed:
+            raise InvalidStateTransition(self.status, new_status)
+        self.status = new_status
+        self.updated_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    
+    def refine_query_after_clarification(
+        self,
+        q_and_a_pairs: List[Dict[str, str]],
+    ) -> str:
+        """
+        Build a refined query from the original query + clarification Q&A.
+        
+        Uses template-based refinement:
+          "{original_query}, where {q1_key} is {a1} and {q2_key} is {a2}"
+        
+        Example:
+          original = "show price"
+          Q: "which product?"  A: "BMW"
+          → "show price, where product is BMW"
+        
+        TODO: Replace with LLM-based refinement when real LLM integration lands.
+        
+        Args:
+            q_and_a_pairs: List of dicts with 'question' and 'answer' keys
+        
+        Returns:
+            The refined query string
+        """
+        base_query = self.current_nl_query or self.original_nl_query or ''
+        
+        if not q_and_a_pairs:
+            return base_query
+        
+        # Extract context from Q&A pairs
+        clauses: List[str] = []
+        for pair in q_and_a_pairs:
+            question = pair.get('question', '').strip()
+            answer = pair.get('answer', '').strip()
+            if not answer:
+                continue
+            
+            # Extract the key concept from the question
+            # Remove common question prefixes/suffixes
+            key = question.lower()
+            for prefix in ('what ', 'which ', 'what is the ', 'which is the ',
+                          'please specify the ', 'specify the '):
+                if key.startswith(prefix):
+                    key = key[len(prefix):]
+                    break
+            # Remove trailing punctuation
+            key = key.rstrip('?').strip()
+            
+            if key:
+                clauses.append(f"{key} is {answer}")
+            else:
+                clauses.append(answer)
+        
+        if clauses:
+            refined = f"{base_query}, where {' and '.join(clauses)}"
+        else:
+            refined = base_query
+        
+        # Update state
+        self.current_nl_query = refined
+        self.updated_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        
+        return refined
+    
+    @staticmethod
+    def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Deep-merge two dictionaries. Nested dicts are merged recursively;
+        all other types are overwritten by the override value.
+        
+        Args:
+            base: Base dictionary
+            override: Override dictionary (takes precedence)
+        
+        Returns:
+            Merged dictionary (new object; inputs are not mutated)
+        """
+        result = dict(base)
+        for key, value in override.items():
+            if (
+                key in result
+                and isinstance(result[key], dict)
+                and isinstance(value, dict)
+            ):
+                result[key] = ConversationState._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+    
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
     
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -216,6 +432,11 @@ class ConversationState:
             # Metadata
             'updated_at': self.updated_at,
             'metadata': self.metadata,
+            
+            # Turn tracking
+            'current_turn_id': self.current_turn_id,
+            'turn_number': self.turn_number,
+            'turns': self.turns,
             
             # Legacy fields for backward compatibility
             'created_at': self.session_start_time,
@@ -264,6 +485,9 @@ class ConversationState:
             errors=data.get('errors'),
             updated_at=data.get('updated_at'),
             metadata=data.get('metadata', {}),
+            current_turn_id=data.get('current_turn_id'),
+            turn_number=data.get('turn_number', 0),
+            turns=data.get('turns', []),
         )
     
     def __repr__(self) -> str:

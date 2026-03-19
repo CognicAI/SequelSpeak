@@ -25,10 +25,18 @@ export function ClarificationPromptCard({
     const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ''));
     const firstInputRef = useRef<HTMLInputElement>(null);
 
+    const [prevQuestions, setPrevQuestions] = useState(questions);
+    
+    // Derive answers state from questions (better than calling setState in useEffect)
+    if (questions !== prevQuestions) {
+        setPrevQuestions(questions);
+        setAnswers(questions.map(() => ''));
+    }
+
     // Focus first input whenever questions change
     useEffect(() => {
-        setAnswers(questions.map(() => ''));
-        setTimeout(() => firstInputRef.current?.focus(), 50);
+        const timer = setTimeout(() => firstInputRef.current?.focus(), 50);
+        return () => clearTimeout(timer);
     }, [questions]);
 
     const allAnswered = answers.every(a => a.trim().length > 0);

@@ -18,7 +18,7 @@ import logging
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 
-from schemas.conversation import ExecutionStage, ConversationStatus
+from schemas.conversation import ExecutionStage, ConversationStatus, QueryType
 from services.conversation_state import (
     ConversationState,
     ConversationStateManager,
@@ -46,6 +46,75 @@ class RouterService:
         """
         self.state_manager = state_manager
     
+    # ------------------------------------------------------------------
+    # Query classification heuristics
+    # ------------------------------------------------------------------
+    
+    # Word sets used by classify_query to determine follow-up vs new query.
+    _REFERENCE_WORDS = {
+        'last', 'those', 'them', 'that', 'above', 'previous',
+        'same', 'it', 'its', 'these', 'this',
+    }
+    _CONTINUATION_PHRASES = [
+        'also', 'and also', 'but', 'instead', 'now', 'what about',
+        'how about', 'can you also',
+    ]
+    _REFINEMENT_WORDS = {
+        'filter', 'only', 'exclude', 'limit', 'sort', 'order by',
+        'group by', 'between', 'where', 'more', 'less', 'top', 'bottom',
+    }
+    
+    def classify_query(
+        self,
+        query: str,
+        state: ConversationState,
+    ) -> QueryType:
+        """
+        Classify a query as NEW or FOLLOW_UP relative to conversation history.
+        
+        Heuristic signals (any match → FOLLOW_UP):
+        - Contains reference words ("last", "those", "them", ...)
+        - Short query (≤5 tokens) with continuation phrase
+        - Contains refinement words ("filter", "only", "sort", ...)
+          combined with a short query and existing history
+        
+        Falls back to NEW for unambiguous, self-contained queries.
+        
+        Args:
+            query: The user's query text
+            state: Current conversation state
+        
+        Returns:
+            QueryType.NEW or QueryType.FOLLOW_UP
+        """
+        # No history → always new
+        if not state.turns and state.turn_number <= 1:
+            return QueryType.NEW
+        
+        query_lower = query.lower()
+        tokens = set(query_lower.split())
+        is_short = len(query_lower.split()) <= 5
+        
+        # Check for reference words
+        if tokens & self._REFERENCE_WORDS:
+            return QueryType.FOLLOW_UP
+        
+        # Check for continuation phrases
+        for phrase in self._CONTINUATION_PHRASES:
+            if phrase in query_lower:
+                return QueryType.FOLLOW_UP
+        
+        # Short query with refinement words → follow_up ("filter by region")
+        if is_short and tokens & self._REFINEMENT_WORDS:
+            return QueryType.FOLLOW_UP
+        
+        # Default: treat as new, self-contained query
+        return QueryType.NEW
+    
+    # ------------------------------------------------------------------
+    # Conversation initialization
+    # ------------------------------------------------------------------
+    
     async def initialize_conversation(
         self,
         query: str,
@@ -56,15 +125,8 @@ class RouterService:
         """
         Initialize a new conversation with Router entry state.
         
-        This method creates the initial ConversationState with:
-        - Proper conversation ID (generated or provided)
-        - Initial execution stage (PLANNING)
-        - Initial status (PROCESSING)
-        - Original query text
-        - User context and correlation ID in metadata
-        
-        The state is persisted BEFORE any routing decisions are made.
-        This ensures we have a complete audit trail from the very start.
+        Creates the initial ConversationState with proper turn tracking,
+        persists BEFORE any routing decisions are made.
         
         Args:
             query: Natural language query from user
@@ -81,10 +143,9 @@ class RouterService:
         # Generate or validate conversation ID
         conv_id = conversation_id or self.state_manager.generate_conversation_id()
         
-        # Create initial state with Router entry values
+        # Create initial state
         state = ConversationState(
             conversation_id=conv_id,
-            original_nl_query=query,
             current_stage=ExecutionStage.PLANNING,
             status=ConversationStatus.PROCESSING,
             awaiting_user_response=False,
@@ -94,12 +155,16 @@ class RouterService:
             }
         )
         
+        # Start the first turn (sets original_nl_query + current_nl_query)
+        state.start_new_turn(query, QueryType.NEW)
+        
         # Persist state with error handling
         try:
             await self._persist_state_with_retry(state)
             logger.info(
                 f"Initialized conversation state: id={conv_id}, "
-                f"stage={state.current_stage.value}, status={state.status.value}",
+                f"stage={state.current_stage.value}, status={state.status.value}, "
+                f"turn={state.turn_number}",
                 extra={'extra_fields': {'correlation_id': correlation_id}}
             )
             return state

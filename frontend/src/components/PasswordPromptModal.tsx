@@ -22,11 +22,18 @@ export function PasswordPromptModal({
     const [password, setPassword] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
     const modalRef = useRef<HTMLDivElement>(null);
+    const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+
+    if (isOpen !== prevIsOpen) {
+        setPrevIsOpen(isOpen);
+        if (isOpen) {
+            setPassword('');
+        }
+    }
 
     useEffect(() => {
         if (!isOpen) return;
 
-        setPassword('');
         // Focus after animation
         const timer = setTimeout(() => {
             inputRef.current?.focus();
