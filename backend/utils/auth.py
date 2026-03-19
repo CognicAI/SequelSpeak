@@ -60,16 +60,34 @@ async def verify_clerk_token(
             detail="Authentication is not configured on this server"
         )
     
-    # Extract token from Bearer scheme
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        logger.warning("Authentication failed: Missing or invalid authorization scheme")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please provide a valid access token.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = credentials.credentials
+    # Extract token from Bearer scheme, with SSE fallback via query param.
+    # EventSource cannot send custom Authorization headers, so we allow
+    # ?access_token=<jwt> for endpoints that use streaming.
+    auth_request = request
+    token: Optional[str] = None
+    if credentials is not None and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+    else:
+        query_token = request.query_params.get("access_token")
+        if query_token:
+            token = query_token
+            # Build a derived Request with Authorization header injected.
+            # We avoid mutating the original request because headers may
+            # already be cached by earlier dependencies.
+            scope_headers = list(request.scope.get("headers", []))
+            has_auth_header = any(k.lower() == b"authorization" for k, _ in scope_headers)
+            if not has_auth_header:
+                scope_headers.append((b"authorization", f"Bearer {token}".encode("utf-8")))
+            scope_copy = dict(request.scope)
+            scope_copy["headers"] = scope_headers
+            auth_request = Request(scope_copy, request.receive)
+        else:
+            logger.warning("Authentication failed: Missing or invalid authorization scheme")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required. Please provide a valid access token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     
     if not token:
         logger.warning("Authentication failed: No token provided")
@@ -89,7 +107,7 @@ async def verify_clerk_token(
         
         # Authenticate request using Clerk SDK
         # Pass the FastAPI Request object directly - Clerk SDK will extract what it needs
-        request_state = authenticate_request(request, auth_options)
+        request_state = authenticate_request(auth_request, auth_options)
         
         # Check authentication result
         if not request_state.is_signed_in:

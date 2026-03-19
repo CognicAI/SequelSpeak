@@ -6,6 +6,7 @@ Aligned with SRS v2 Router specifications.
 """
 
 from typing import Optional, Literal, Any
+from typing_extensions import TypedDict
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from enum import Enum
 import re
@@ -335,6 +336,13 @@ class RouterErrorResponse(BaseModel):
 ROUTER_SCHEMA_VERSION = "1.0.0"
 
 
+class PersonaTraceSummary(TypedDict):
+    """Compact persona timing row returned in status payload."""
+
+    persona: str
+    duration_ms: Optional[float]
+
+
 class QueryStatusResponse(BaseModel):
     """
     Response from GET /api/v1/query/status/{conversation_id}.
@@ -351,14 +359,21 @@ class QueryStatusResponse(BaseModel):
     estimated_completion_ms: Optional[int] = Field(default=None, description="Best-effort remaining time estimate in ms")
     progress_percentage: Optional[int] = Field(default=None, description="Pipeline progress percentage (0-100)")
     awaiting_user_response: bool = Field(default=False, description="True if execution is paused for clarification")
-    pending_clarification_questions: list[str] = Field(
+    pending_clarification_questions: list[Any] = Field(
         default_factory=list,
-        description="Questions awaiting user answer"
+        description="Questions awaiting user answer (strings or ClarificationQuestionItem dicts)"
+    )
+    clarification_rounds: int = Field(
+        default=0,
+        description="Number of clarification rounds completed this turn (FR-87)"
     )
     generated_sql: Optional[str] = Field(default=None, description="SQL produced by SQLWriter, if available")
     execution_result: Optional[Any] = Field(default=None, description="Query result rows/metadata from Executor")
     explanation: Optional[str] = Field(default=None, description="Plain-English explanation from Explainer")
-    persona_trace: list[dict[str, Any]] = Field(default_factory=list, description="Persona trace entries with timing metadata")
+    persona_trace: list[PersonaTraceSummary] = Field(
+        default_factory=lambda: [],
+        description="Persona trace entries with timing metadata"
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -446,4 +461,43 @@ class QueryRespondResponse(BaseModel):
             }
         }
     )
+
+
+class ClarificationQuestionItem(BaseModel):
+    """Structured clarification question with defaults and options (FR-81)."""
+
+    question: str = Field(..., description="Question text to display to user")
+    param: Optional[str] = Field(default=None, description="Parameter name being clarified")
+    options: Optional[list[str]] = Field(default=None, description="Valid option values")
+    default: Optional[str] = Field(default=None, description="Suggested default value")
+    required: bool = Field(default=True, description="Whether an answer is required")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "question": "Which time range?",
+                "param": "time_range",
+                "options": ["last_month", "last_quarter", "ytd"],
+                "default": "last_month",
+                "required": True,
+            }
+        }
+    )
+
+
+class QueryCancelResponse(BaseModel):
+    """Response from POST /api/v1/query/cancel/{conversation_id} (FR-83)."""
+
+    conversation_id: str = Field(..., description="UUID v4 of the cancelled conversation")
+    status: Literal["cancelled"] = Field(default="cancelled")
+    message: str = Field(default="Conversation cancelled successfully")
+
+
+class QueryRetryResponse(BaseModel):
+    """Response from POST /api/v1/query/retry/{conversation_id}."""
+
+    conversation_id: str = Field(..., description="UUID v4 of the retried conversation")
+    status: str = Field(..., description="Updated ConversationStatus after retry")
+    current_stage: str = Field(..., description="Updated ExecutionStage")
+    message: str = Field(default="Query retry initiated")
 

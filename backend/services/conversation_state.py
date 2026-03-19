@@ -19,7 +19,7 @@ import json
 import uuid
 import asyncio
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List, TYPE_CHECKING, AsyncGenerator
+from typing import Optional, Dict, Any, List, TYPE_CHECKING, AsyncGenerator, cast
 
 try:
     import redis.asyncio as redis
@@ -111,6 +111,7 @@ class ConversationState:
         current_turn_id: Optional[str] = None,
         turn_number: int = 0,
         turns: Optional[List[Dict[str, Any]]] = None,
+        clarification_rounds: int = 0,
         # Legacy fields for backward compatibility
         created_at: Optional[str] = None,
     ):
@@ -187,6 +188,7 @@ class ConversationState:
         self.current_turn_id = current_turn_id
         self.turn_number = turn_number
         self.turns: List[Dict[str, Any]] = turns or []
+        self.clarification_rounds = clarification_rounds
     
     # Legacy property for backward compatibility
     @property
@@ -223,7 +225,7 @@ class ConversationState:
         
         # Snapshot current turn if it exists and is finished
         if self.current_turn_id and self.turn_number > 0:
-            snapshot = {
+            snapshot: Dict[str, Any] = {
                 'turn_id': self.current_turn_id,
                 'turn_number': self.turn_number,
                 'original_query': self.current_nl_query or self.original_nl_query or '',
@@ -262,6 +264,7 @@ class ConversationState:
         self.persona_trace = []
         self.awaiting_user_response = False
         self.pending_clarification_questions = []
+        self.clarification_rounds = 0
         
         # Store turn start time in metadata for snapshot
         self.metadata['_turn_started_at'] = now
@@ -381,7 +384,9 @@ class ConversationState:
                 and isinstance(result[key], dict)
                 and isinstance(value, dict)
             ):
-                result[key] = ConversationState._deep_merge(result[key], value)
+                nested_base = cast(Dict[str, Any], result[key])
+                nested_override = cast(Dict[str, Any], value)
+                result[key] = ConversationState._deep_merge(nested_base, nested_override)
             else:
                 result[key] = value
         return result
@@ -437,6 +442,7 @@ class ConversationState:
             'current_turn_id': self.current_turn_id,
             'turn_number': self.turn_number,
             'turns': self.turns,
+            'clarification_rounds': self.clarification_rounds,
             
             # Legacy fields for backward compatibility
             'created_at': self.session_start_time,
@@ -488,6 +494,7 @@ class ConversationState:
             current_turn_id=data.get('current_turn_id'),
             turn_number=data.get('turn_number', 0),
             turns=data.get('turns', []),
+            clarification_rounds=data.get('clarification_rounds', 0),
         )
     
     def __repr__(self) -> str:

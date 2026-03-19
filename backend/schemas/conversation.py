@@ -188,6 +188,12 @@ ALLOWED_TRANSITIONS: Dict[ConversationStatus, Set[ConversationStatus]] = {
 # Maximum number of completed turns retained in state. Older turns evicted FIFO.
 MAX_TURNS = 20
 
+# FR-87: Maximum clarification rounds before offering fallback suggestions.
+MAX_CLARIFICATION_ROUNDS = 3
+
+# FR-82: Timeout for paused (clarification) conversations in seconds (30 minutes).
+CLARIFICATION_TIMEOUT_SECONDS = 1800
+
 
 class InvalidStateTransition(Exception):
     """Raised when a status transition violates the state machine rules."""
@@ -381,6 +387,10 @@ class ConversationStateSchema(BaseModel):
     turns: List[Dict[str, Any]] = Field(
         default_factory=lambda: [],
         description="Completed turn snapshots (capped at MAX_TURNS, FIFO eviction)"
+    )
+    clarification_rounds: int = Field(
+        default=0,
+        description="Number of clarification rounds completed this turn (FR-87: max 3)"
     )
     
     model_config = ConfigDict(

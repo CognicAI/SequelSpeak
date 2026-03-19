@@ -7,7 +7,7 @@ the Router request schema. This is the entry point for all query requests.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, Mapping, Optional, cast
 from fastapi import APIRouter, status, Request, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -20,6 +20,8 @@ from schemas.router import (
     QueryStatusResponse,
     QueryRespondRequest,
     QueryRespondResponse,
+    QueryCancelResponse,
+    QueryRetryResponse,
 )
 from services.conversation_state import conversation_state_manager, ConversationState
 from services.router_service import get_router_service
@@ -73,6 +75,19 @@ ESTIMATED_REMAINING_MS_BY_STAGE: dict[str, int] = {
 }
 
 
+def _deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge dictionaries without mutating inputs."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            nested_base = cast(dict[str, Any], result[key])
+            nested_override = cast(dict[str, Any], value)
+            result[key] = _deep_merge_dicts(nested_base, nested_override)
+        else:
+            result[key] = value
+    return result
+
+
 def _to_persona_trace(trace_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     trace: list[dict[str, Any]] = []
     for entry in trace_entries:
@@ -97,6 +112,7 @@ def _build_status_payload(state: ConversationState) -> dict[str, Any]:
         "completed_personas": state.completed_stages or [],
         "estimated_completion_ms": estimated_completion_ms,
         "progress_percentage": progress_percentage,
+        "clarification_rounds": state.clarification_rounds,
         "awaiting_user_response": state.awaiting_user_response,
         "pending_clarification_questions": list(state.pending_clarification_questions or []),
         "generated_sql": state.generated_sql,
@@ -122,6 +138,25 @@ def _assert_conversation_owner(state: ConversationState, user_id: str, conversat
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Conversation '{conversation_id}' is not accessible by this user.",
         )
+
+
+def _check_clarification_timeout(state: ConversationState) -> bool:
+    """
+    FR-82: Check if a paused conversation has exceeded the 30-minute timeout.
+
+    Returns True if the conversation has timed out, False otherwise.
+    """
+    from schemas.conversation import CLARIFICATION_TIMEOUT_SECONDS, ConversationStatus
+
+    if state.status != ConversationStatus.CLARIFICATION_NEEDED:
+        return False
+
+    try:
+        updated_at = datetime.fromisoformat(state.updated_at.replace('Z', '+00:00'))
+        elapsed = (datetime.now(timezone.utc) - updated_at).total_seconds()
+        return elapsed > CLARIFICATION_TIMEOUT_SECONDS
+    except (ValueError, TypeError):
+        return False
 
 
 def build_router_context(
@@ -316,20 +351,36 @@ async def initialize_query(
         _assert_conversation_owner(existing_state, user_id, payload.conversation_id)
     
     should_enqueue = False
-
     if existing_state:
         # ── Existing conversation ──────────────────────────────────────
         conversation_id = existing_state.conversation_id
         
+        from schemas.conversation import ConversationStatus, ExecutionStage
+
+        # FR-82: Check for clarification timeout
+        if _check_clarification_timeout(existing_state):
+            existing_state.status = ConversationStatus.TIMEOUT
+            existing_state.current_stage = ExecutionStage.TIMEOUT
+            existing_state.updated_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            await conversation_state_manager.save_state(existing_state)
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail=(
+                    f"Conversation '{existing_state.conversation_id}' timed out after "
+                    "30 minutes of inactivity during clarification."
+                ),
+            )
+
         # Deep-merge user context (Issue #10)
         existing_ctx = existing_state.metadata.get("user_context", {})
         new_ctx = {k: v for k, v in user_context_dict.items() if v is not None}
-        merged_ctx: dict[str, Any] = ConversationState._deep_merge(existing_ctx, new_ctx)
+        merged_ctx: dict[str, Any] = _deep_merge_dicts(existing_ctx, new_ctx)
         existing_state.metadata["user_context"] = merged_ctx
-        existing_state.metadata["correlation_id"] = correlation_id
+        # Preserve original correlation_id; only update if not already set
+        if not existing_state.metadata.get("correlation_id"):
+            existing_state.metadata["correlation_id"] = correlation_id
         
         # Block if already processing or awaiting clarification
-        from schemas.conversation import ConversationStatus, ExecutionStage
         if existing_state.status == ConversationStatus.PROCESSING:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -359,6 +410,9 @@ async def initialize_query(
         existing_state.current_stage = ExecutionStage.PLANNING
         
         should_enqueue = True
+        # Set database_id BEFORE save to avoid extra roundtrip
+        if payload.database_id:
+            existing_state.metadata["database_id"] = payload.database_id
         existing_state.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         await conversation_state_manager.save_state(existing_state)
     else:
@@ -370,6 +424,9 @@ async def initialize_query(
             correlation_id=correlation_id,
         )
         conversation_id = state.conversation_id
+        # Set database_id BEFORE first save to avoid extra roundtrip
+        if payload.database_id:
+            state.metadata["database_id"] = payload.database_id
         await conversation_state_manager.save_state(state)
         merged_ctx = user_context_dict
         should_enqueue = True
@@ -377,14 +434,6 @@ async def initialize_query(
     # Attach to request.state for downstream propagation
     request.state.conversation_id = conversation_id
     request.state.user_context = merged_ctx
-
-    # Store database_id in conversation metadata
-    if payload.database_id:
-        state_to_update = await conversation_state_manager.get_state(conversation_id)
-        if state_to_update:
-            state_to_update.metadata["database_id"] = payload.database_id
-            state_to_update.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            await conversation_state_manager.save_state(state_to_update)
 
     safe_ctx = sanitize_user_context_for_log(merged_ctx)
     logger.info(
@@ -587,12 +636,39 @@ async def respond_to_clarification(
 
     _assert_conversation_owner(state, user_id, payload.conversation_id)
 
+    # FR-82: Check for clarification timeout before processing
+    if _check_clarification_timeout(state):
+        state.status = ConversationStatus.TIMEOUT
+        state.current_stage = ExecutionStage.TIMEOUT
+        state.updated_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        await conversation_state_manager.save_state(state)
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=(
+                f"Conversation '{payload.conversation_id}' timed out after "
+                "30 minutes of inactivity during clarification."
+            ),
+        )
+
     if state.status != ConversationStatus.CLARIFICATION_NEEDED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Cannot respond: conversation is in state '{state.status.value}', "
                 f"expected 'clarification_needed'."
+            ),
+        )
+
+    # FR-87: Enforce clarification round limit
+    from schemas.conversation import MAX_CLARIFICATION_ROUNDS
+    state.clarification_rounds += 1
+    if state.clarification_rounds > MAX_CLARIFICATION_ROUNDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Maximum clarification rounds ({MAX_CLARIFICATION_ROUNDS}) exceeded. "
+                "Please try rephrasing your query, use the manual SQL editor, "
+                "or check similar past queries for guidance."
             ),
         )
 
@@ -603,6 +679,11 @@ async def respond_to_clarification(
     if answer_count == 0 and payload.message:
         # Single message used as answer for all questions
         pass
+    elif answer_count == 0 and not payload.message:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Must provide either 'answers' array or 'message' field.",
+        )
     elif answer_count != pending_count and answer_count > 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -616,14 +697,21 @@ async def respond_to_clarification(
     now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
     # Build Q&A pairs and append to clarification history
+    # FR-81 compat: questions may be plain strings or structured dicts
     q_and_a_pairs: list[dict[str, str]] = []
-    for i, question in enumerate(state.pending_clarification_questions):
+    for i, question_item in enumerate(state.pending_clarification_questions):
+        # Extract question text from string or structured dict
+        if isinstance(question_item, dict):
+            question_dict = cast(Mapping[str, Any], question_item)
+            question_text = str(question_dict.get('question', question_item))
+        else:
+            question_text = str(question_item)
         answer_text = payload.answers[i] if i < len(payload.answers) else ""
         if not answer_text and payload.message:
             answer_text = payload.message
-        q_and_a_pairs.append({'question': question, 'answer': answer_text})
+        q_and_a_pairs.append({'question': question_text, 'answer': answer_text})
         state.clarification_history.append(ClarificationQuestion(
-            question=question,
+            question=question_text,
             answer=answer_text,
             timestamp=now,
         ).model_dump())
@@ -641,7 +729,17 @@ async def respond_to_clarification(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
-    state.current_stage = ExecutionStage.PLANNING
+    # FR-78/FR-86: Resume from paused_at_stage if available
+    paused_at = state.metadata.get('_paused_at_stage')
+    if paused_at:
+        try:
+            state.current_stage = ExecutionStage(paused_at)
+        except ValueError:
+            state.current_stage = ExecutionStage.PLANNING
+        # Clear the paused marker
+        state.metadata.pop('_paused_at_stage', None)
+    else:
+        state.current_stage = ExecutionStage.PLANNING
 
     if payload.database_id:
         state.metadata["database_id"] = payload.database_id
@@ -652,11 +750,11 @@ async def respond_to_clarification(
     logger.info(
         f"Clarification answered: conversation_id={state.conversation_id}, "
         f"answers_count={len(payload.answers)}, "
-        f"refined_query='{(state.current_nl_query or '')[:80]}'"
+        f"refined_query='{(state.current_nl_query or '')[:80]}', "
+        f"resume_stage={state.current_stage.value}"
     )
 
-    # Re-launch orchestrator — will resume from PLANNING
-    # (TODO: resume from paused_at_stage when orchestrator supports it)
+    # Re-launch orchestrator — resumes from paused_at_stage
     orchestrator = get_orchestrator_service()
     background_tasks.add_task(orchestrator.execute_conversation, state.conversation_id)
 
@@ -665,4 +763,171 @@ async def respond_to_clarification(
         status=state.status.value,
         current_stage=state.current_stage.value,
         message="Clarification answers recorded",
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FR-83: Cancel endpoint
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/cancel/{conversation_id}",
+    response_model=QueryCancelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Cancel a Query",
+    description="""
+Cancel an active or paused conversation. Transitions the conversation to
+`cancelled` status. Only the conversation owner may cancel.
+
+Safe to call on already-cancelled conversations (idempotent).
+
+Terminal states (`complete`, `error`, `timeout`) cannot be cancelled.
+    """,
+    responses={
+        200: {"description": "Conversation cancelled", "model": QueryCancelResponse},
+        403: {"description": "Not the conversation owner"},
+        404: {"description": "Conversation not found"},
+        409: {"description": "Conversation is in a terminal state and cannot be cancelled"},
+    },
+    tags=["Query"],
+)
+async def cancel_query(
+    conversation_id: str,
+    user_claims: Dict[str, Any] = Depends(verify_clerk_token),
+) -> QueryCancelResponse:
+    """Cancel an active or paused conversation (FR-83)."""
+    from schemas.conversation import ConversationStatus, ExecutionStage
+
+    user_id = str(user_claims.get("sub", "unknown"))
+    state = await conversation_state_manager.get_state(conversation_id)
+
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation '{conversation_id}' not found or has expired.",
+        )
+
+    _assert_conversation_owner(state, user_id, conversation_id)
+
+    # Idempotent: already cancelled is fine
+    if state.status == ConversationStatus.CANCELLED:
+        return QueryCancelResponse(
+            conversation_id=conversation_id,
+            status="cancelled",
+            message="Conversation was already cancelled",
+        )
+
+    # Cannot cancel terminal states
+    terminal_states = {ConversationStatus.COMPLETE, ConversationStatus.ERROR, ConversationStatus.TIMEOUT}
+    if state.status in terminal_states:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot cancel: conversation is in terminal state '{state.status.value}'."
+            ),
+        )
+
+    # Transition to cancelled
+    try:
+        state.transition_status(ConversationStatus.CANCELLED)
+    except InvalidStateTransition as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+
+    state.current_stage = ExecutionStage.CANCELLED
+    state.awaiting_user_response = False
+    state.updated_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    await conversation_state_manager.save_state(state)
+
+    logger.info(
+        f"Conversation cancelled: conversation_id={conversation_id}, user_id={user_id[:8]}..."
+    )
+
+    return QueryCancelResponse(
+        conversation_id=conversation_id,
+        status="cancelled",
+        message="Conversation cancelled successfully",
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Retry endpoint
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/retry/{conversation_id}",
+    response_model=QueryRetryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retry a Failed Query",
+    description="""
+Retry a failed query by resetting the conversation to `processing` status
+and re-enqueuing the orchestrator pipeline from the `planning` stage.
+
+Only conversations in `error` status can be retried.
+    """,
+    responses={
+        200: {"description": "Query retry initiated", "model": QueryRetryResponse},
+        403: {"description": "Not the conversation owner"},
+        404: {"description": "Conversation not found"},
+        409: {"description": "Conversation is not in error state"},
+    },
+    tags=["Query"],
+)
+async def retry_query(
+    conversation_id: str,
+    background_tasks: BackgroundTasks,
+    user_claims: Dict[str, Any] = Depends(verify_clerk_token),
+) -> QueryRetryResponse:
+    """Retry a failed query by re-enqueuing the orchestrator pipeline."""
+    from schemas.conversation import ConversationStatus, ExecutionStage
+
+    user_id = str(user_claims.get("sub", "unknown"))
+    state = await conversation_state_manager.get_state(conversation_id)
+
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation '{conversation_id}' not found or has expired.",
+        )
+
+    _assert_conversation_owner(state, user_id, conversation_id)
+
+    if state.status != ConversationStatus.ERROR:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot retry: conversation is in state '{state.status.value}', "
+                f"expected 'error'."
+            ),
+        )
+
+    # Transition back to processing
+    try:
+        state.transition_status(ConversationStatus.PROCESSING)
+    except InvalidStateTransition as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+
+    state.current_stage = ExecutionStage.PLANNING
+    state.errors = []  # Clear errors for retry
+    state.updated_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    await conversation_state_manager.save_state(state)
+
+    # Re-enqueue orchestrator
+    orchestrator = get_orchestrator_service()
+    background_tasks.add_task(orchestrator.execute_conversation, conversation_id)
+
+    logger.info(
+        f"Query retry initiated: conversation_id={conversation_id}, user_id={user_id[:8]}..."
+    )
+
+    return QueryRetryResponse(
+        conversation_id=conversation_id,
+        status=state.status.value,
+        current_stage=state.current_stage.value,
+        message="Query retry initiated",
     )
