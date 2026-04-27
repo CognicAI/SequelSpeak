@@ -1,73 +1,189 @@
-# React + TypeScript + Vite
+# SequelSpeak Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + TypeScript + Vite app that provides the connection management UI and the Clerk-authenticated entry point for SequelSpeak.
 
-Currently, two official plugins are available:
+For the project-wide overview see the [root README](../README.md). For backend details see [backend/README.md](../backend/README.md).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Stack
 
-## React Compiler
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| UI library | React | 19.2.0 |
+| Language | TypeScript | ~5.9.3 |
+| Build tool / dev server | Vite | ^7.2.4 |
+| Styling | Tailwind CSS via `@tailwindcss/vite` | ^4.1.18 |
+| Authentication | `@clerk/clerk-react` | ^5.60.0 |
+| Icons | `lucide-react` | ^0.562.0 |
+| Class merging | `clsx` + `tailwind-merge` | latest |
+| Testing | Vitest + Testing Library + jsdom | ^4.0.18 / ^16.3.2 / ^28.1.0 |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Full dependency list: [package.json](package.json).
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd frontend
+npm install
+cp .env.example .env
+# Fill in VITE_API_URL and VITE_CLERK_PUBLISHABLE_KEY
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The dev server runs with `--host` (per [package.json](package.json)) so it is reachable from other devices on the LAN.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Scripts
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Only the scripts defined in [package.json](package.json):
+
+| Script | Command | Purpose |
+|--------|---------|---------|
+| `npm run dev` | `vite --host` | Start the dev server |
+| `npm run build` | `tsc -b && vite build` | Type-check and build for production |
+| `npm run lint` | `eslint .` | Run ESLint over the project |
+| `npm run preview` | `vite preview` | Preview the production bundle |
+
+There is no dedicated `test` or `type-check` script; run them via `npx`:
+
+```bash
+npx vitest          # run unit/component tests
+npx vitest --ui     # interactive UI
+npx tsc --noEmit    # standalone type-check
 ```
+
+## Environment Variables
+
+From [.env.example](.env.example):
+
+```env
+VITE_API_URL=http://localhost:8000
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_your_clerk_publishable_key_here
+```
+
+`VITE_*` values are statically replaced by Vite at build time. In Docker they are passed as build args (see "Docker" below).
+
+[src/main.tsx](src/main.tsx) throws on startup if `VITE_CLERK_PUBLISHABLE_KEY` is missing.
+
+## Project Layout
+
+```
+frontend/
+├── index.html
+├── nginx.conf                          # Production SPA config (used by Docker image)
+├── Dockerfile                          # Multi-stage build (deps -> build -> nginx)
+├── eslint.config.js
+├── vite.config.ts                      # Tailwind v4 + Vitest + path aliases
+├── tsconfig.{json,app.json,node.json}
+├── package.json
+├── .env.example
+└── src/
+    ├── main.tsx                        # ClerkProvider + ErrorBoundary entry
+    ├── App.tsx                         # Clerk-gated shell (SignedIn/SignedOut)
+    ├── App.css / index.css             # Global styles
+    ├── components/
+    │   ├── ConnectionForm.tsx          # Main DB connection form
+    │   ├── ConnectionStatusBanner.tsx  # Status feedback banner
+    │   ├── ErrorBoundary.tsx
+    │   ├── FormField.tsx
+    │   ├── PasswordPromptModal.tsx     # Modal to ask for cached profile passwords
+    │   ├── ProfileSelector.tsx         # Profile picker
+    │   ├── hooks/                      # use-auto-scroll, etc.
+    │   └── __tests__/                  # Component tests
+    ├── hooks/
+    │   ├── useProfileSelection.ts
+    │   ├── index.ts
+    │   └── __tests__/
+    ├── services/
+    │   ├── api/                        # client.ts, errors.ts (typed API client)
+    │   ├── profileStorage.ts           # LocalStorage adapter for profile metadata
+    │   └── __tests__/
+    ├── data/
+    │   ├── apiProfileAdapter.ts        # API <-> UI profile mapping
+    │   └── index.ts
+    ├── types/                          # api.ts, profile.ts
+    ├── constants/                      # ui.ts, validation.ts
+    ├── lib/                            # Shared helpers
+    ├── test/setup.ts                   # `import '@testing-library/jest-dom'`
+    └── assets/
+```
+
+### Path Aliases
+
+Configured in [vite.config.ts](vite.config.ts) and the tsconfig:
+
+| Alias | Resolves to |
+|-------|-------------|
+| `@` | `src/` |
+| `@components` | `src/components/` |
+| `@hooks` | `src/hooks/` |
+| `@services` | `src/services/` |
+| `@app-types` | `src/types/` |
+
+### Build Chunking
+
+[vite.config.ts](vite.config.ts) splits the production bundle into `react`, `clerk`, and `ui` chunks for better caching.
+
+## Authentication
+
+Clerk gates the entire app:
+
+- [src/main.tsx](src/main.tsx) wraps `<App />` with `<ClerkProvider>` and an `<ErrorBoundary>`
+- [src/App.tsx](src/App.tsx) renders the connection UI inside `<SignedIn>` and a sign-in/sign-up CTA inside `<SignedOut>`
+- The API client attaches the Clerk session token to backend requests; protected backend endpoints validate it via `verify_clerk_token`
+
+## Testing
+
+Vitest is configured in [vite.config.ts](vite.config.ts) with the `jsdom` environment and `src/test/setup.ts` (which loads `@testing-library/jest-dom`).
+
+Existing test files:
+
+- [src/components/__tests__/PasswordPromptModal.test.tsx](src/components/__tests__/PasswordPromptModal.test.tsx)
+- [src/components/__tests__/ConnectionStatusBanner.test.tsx](src/components/__tests__/ConnectionStatusBanner.test.tsx)
+- [src/hooks/__tests__/useProfileSelection.test.ts](src/hooks/__tests__/useProfileSelection.test.ts)
+- [src/services/__tests__/profileStorage.test.ts](src/services/__tests__/profileStorage.test.ts)
+
+Add new tests under a sibling `__tests__/` directory next to the file under test, named `*.test.ts` or `*.test.tsx`.
+
+```bash
+npx vitest             # watch mode
+npx vitest run         # single pass
+npx vitest --ui        # interactive UI
+```
+
+## Docker
+
+The image is a multi-stage build (see [Dockerfile](Dockerfile)):
+
+1. `dependencies`: `npm ci` against `package.json` + `npm-shrinkwrap.json`
+2. `builder`: copies the source, accepts `VITE_API_URL` and `VITE_CLERK_PUBLISHABLE_KEY` as build args, runs `npm run build`
+3. Final stage: `nginx:alpine` serving `/usr/share/nginx/html` with [nginx.conf](nginx.conf) (gzip, security headers, SPA fallback, asset caching, optional `/api` reverse proxy)
+
+In [docker-compose.yml](../docker-compose.yml), the `frontend` service receives the build args from the project-root `.env`:
+
+```yaml
+frontend:
+  build:
+    args:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
+  ports:
+    - "80:80"
+```
+
+Because `VITE_*` values are baked at build time, you must rebuild the frontend image when changing them:
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d frontend
+```
+
+## Linting
+
+```bash
+npm run lint
+```
+
+ESLint is configured in [eslint.config.js](eslint.config.js) (flat config) with `typescript-eslint`, `eslint-plugin-react-hooks`, and `eslint-plugin-react-refresh`.
+
+## Browser Support
+
+Modern evergreen browsers; Vite's default targets apply. The Clerk SDK and Tailwind v4 set the practical floor.
