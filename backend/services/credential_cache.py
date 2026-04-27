@@ -5,6 +5,7 @@ from typing import Optional
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from redis.asyncio import Redis, from_url
+from redis.exceptions import RedisError
 import logging
 
 from config import settings
@@ -56,40 +57,62 @@ class CredentialCacheService:
 
     async def store_password(self, user_id: str, profile_id: str, password: str):
         """Store encrypted password in Redis with TTL."""
-        await self._ensure_redis()
-        assert self.redis_client is not None
-        encrypted = self._encrypt(password)
-        key = self._get_key(user_id, profile_id)
-        await self.redis_client.setex(key, self._ttl, encrypted)
-        logger.debug(f"Stored password for profile {profile_id} in cache (TTL: {self._ttl}s)")
+        try:
+            await self._ensure_redis()
+            assert self.redis_client is not None
+            encrypted = self._encrypt(password)
+            key = self._get_key(user_id, profile_id)
+            await self.redis_client.setex(key, self._ttl, encrypted)
+            logger.debug(f"Stored password for profile {profile_id} in cache (TTL: {self._ttl}s)")
+        except RedisError as exc:
+            logger.warning(
+                "Credential cache unavailable while storing password (profile_id=%s): %s",
+                profile_id,
+                exc,
+            )
 
     async def get_password(self, user_id: str, profile_id: str) -> Optional[str]:
         """Retrieve and decrypt password from Redis."""
-        await self._ensure_redis()
-        assert self.redis_client is not None
-        key = self._get_key(user_id, profile_id)
-        encrypted = await self.redis_client.get(key)
-        if not encrypted:
-            return None
         try:
-            return self._decrypt(encrypted)
-        except (InvalidTag, Exception) as exc:
-            # Covers: InvalidTag (wrong key / SECRET_KEY rotation), corrupted base64,
-            # truncated ciphertext, or any other decryption failure.
+            await self._ensure_redis()
+            assert self.redis_client is not None
+            key = self._get_key(user_id, profile_id)
+            encrypted = await self.redis_client.get(key)
+            if not encrypted:
+                return None
+            try:
+                return self._decrypt(encrypted)
+            except (InvalidTag, Exception) as exc:
+                # Covers: InvalidTag (wrong key / SECRET_KEY rotation), corrupted base64,
+                # truncated ciphertext, or any other decryption failure.
+                logger.warning(
+                    "Decryption failed for cached credential (profile_id=%s). "
+                    "Evicting bad cache entry so caller can prompt for credentials. "
+                    "Cause: %s: %s",
+                    profile_id, type(exc).__name__, exc,
+                )
+                await self.redis_client.delete(key)
+                return None
+        except RedisError as exc:
             logger.warning(
-                "Decryption failed for cached credential (profile_id=%s). "
-                "Evicting bad cache entry so caller can prompt for credentials. "
-                "Cause: %s: %s",
-                profile_id, type(exc).__name__, exc,
+                "Credential cache unavailable while reading password (profile_id=%s): %s",
+                profile_id,
+                exc,
             )
-            await self.redis_client.delete(key)
             return None
 
     async def clear_password(self, user_id: str, profile_id: str):
         """Manually clear a password from cache."""
-        await self._ensure_redis()
-        assert self.redis_client is not None
-        key = self._get_key(user_id, profile_id)
-        await self.redis_client.delete(key)
+        try:
+            await self._ensure_redis()
+            assert self.redis_client is not None
+            key = self._get_key(user_id, profile_id)
+            await self.redis_client.delete(key)
+        except RedisError as exc:
+            logger.warning(
+                "Credential cache unavailable while clearing password (profile_id=%s): %s",
+                profile_id,
+                exc,
+            )
 
 credential_cache = CredentialCacheService()
